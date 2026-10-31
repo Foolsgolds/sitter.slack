@@ -27,6 +27,7 @@ pub struct SlackTopicOrPurpose {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct SlackFile {
+    pub id: Option<String>,
     pub mimetype: Option<String>,
     pub thumb_360: Option<String>,
     pub thumb_480: Option<String>,
@@ -65,6 +66,8 @@ pub struct SlackMessage {
     #[serde(default)]
     pub reply_count: i64,
     pub thread_ts: Option<String>,
+    pub subtype: Option<String>,
+    pub latest_reply: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

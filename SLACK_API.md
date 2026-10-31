@@ -138,3 +138,38 @@ Slack 内のプライベート画像 (`files.slack.com` など) は Bearer ト�
 | `chat:write` | メッセージの送信 |
 | `emoji:read` | カスタム絵文字一覧の取得 |
 | `reactions:write` | リアクションの追加 / 取り消し |
+
+## 同期ワーカーからの呼び出し (SQLite への蓄積)
+
+`crates/core/src/sync/` の `SyncService` / `SyncScheduler` は、Slack の情報を SQLite に蓄積します。
+Tauri のコマンド (上の表) とは別の経路で、現時点では `core` の中で完結しています (サーバー化は Phase 3 以降)。
+同期ワーカーは `SlackApi` トレイトを通して Slack を呼びます (`SlackClient` が実装し、テストでは差し替えます)。
+すべての呼び出しは `with_retry` を通り、429 の `Retry-After` を守ります。
+
+### 同期のどの段階で、どの頻度で呼ぶか
+
+| API | 同期の段階 | 頻度 (設定の既定値) |
+|-----|-----------|--------------------|
+| `conversations.list` | `sync_catalog()`。全ページを取得し、`channels` を upsert する。ページに現れなかった既知チャンネルは `is_archived = true` にする | 起動時と 1 時間ごと (`catalog_interval`) |
+| `emoji.list` | `sync_catalog()`。alias を解決して `emoji` を置き換える | 同上 (`conversations.list` と同じ回) |
+| `conversations.history` | `sync_channel()` の 1〜2 段階。最新ページを必ず取り、保存済みの最新 `ts` に届くまで、または上限ページ数 (`max_pages_per_channel`、既定 10) までカーソルで遡る | 同期対象 1 チャンネルにつき 1 周で 1 回以上。呼び出しの間隔は 1 分 (`request_spacing`)。1 周が終わったら 5 分 (`cycle_interval`) 置く |
+| `conversations.replies` | `sync_channel()` の 4 段階。`reply_count` または `latest_reply` が保存値と異なる親メッセージだけ | 変化したスレッドごとに 1 回。間隔は `conversations.history` と同じ `request_spacing` |
+| `users.info` | `sync_channel()` の 5 段階。現れた投稿者のうち、未保存か取得から 24 時間以上たったものだけ | 必要なユーザーごとに 1 回。間引きはしない (Tier 4 のため) |
+
+呼び出さない API (従来どおり Tauri のコマンドが呼ぶ): `auth.test`、`chat.postMessage`、`reactions.add` / `reactions.remove`。
+
+### 差分取得の方法
+
+`conversations.history` には `oldest` を付けません。
+毎回「最新ページ (`history_limit` 件、既定 15)」を取り直します。
+こうすると、最近のメッセージに付いたリアクション、編集、新しい返信も同じ 1 回の呼び出しで DB に反映できます。
+ページ内の最古の `ts` が `sync_state.last_message_ts` 以下になるか、`has_more` が偽になったら遡るのをやめます。
+初回 (`last_message_ts` が空) は最新の 1 ページだけを取ります。
+取得したメッセージは `messages.raw_json` に Slack の応答のまま保存し、本文の解析と画像候補の抽出は読み出し時に行います。
+
+### 失敗したとき
+
+チャンネル単位の失敗は `sync_state.last_error` に残し、次のチャンネルへ進みます (成功すると消えます)。
+`last_message_ts` と `last_synced_at` は失敗では動かしません。
+メッセージと返信の書き込みは 1 つのトランザクションで行い、返信の取得に失敗した親メッセージが「最新」に見えてしまうことを防いでいます。
+`conversations.list` の途中で失敗したときは、チャンネルのアーカイブ判定を行いません。
