@@ -1,20 +1,32 @@
+import { toggleCustomBoard } from "../actions/boards";
 import { startWorkspaceRefresh } from "../actions/session";
 import { useAuthStore } from "../store/authStore";
+import { useBoardStore } from "../store/boardStore";
 import { useUiStore } from "../store/uiStore";
+import { BoardAddPopup } from "./BoardAddPopup";
+import { BoardSettingsPopup } from "./BoardSettingsPopup";
 import { BubbleButton } from "./BubbleButton";
 import { MessagePopup } from "./MessagePopup";
 import { UserPopup } from "./UserPopup";
 
+/** The first character (code point) of a board name labels its button. */
+function boardInitial(name: string): string {
+  return Array.from(name.trim())[0] ?? "?";
+}
+
 /**
  * Bottom-center controller bar (see CONTROLER.md). Circle buttons open a
  * bubble popup; rounded-square buttons carry a selected state instead.
- * Log viewer, board editor (gear) and "+" arrive in later milestones.
+ * Order follows the legacy bar: user, gear, message, plus, refresh, ①, ②,
+ * then one button per custom board. The log viewer arrives in a later milestone.
  */
 export function MainControllerView() {
   const avatarUri = useAuthStore((s) => s.avatarUri);
   const activeFilter = useUiStore((s) => s.activeFilter);
   const setActiveFilter = useUiStore((s) => s.setActiveFilter);
   const isRefreshing = useUiStore((s) => s.isRefreshing);
+  const customBoards = useBoardStore((s) => s.customBoards);
+  const activeCustomBoardIndex = useBoardStore((s) => s.activeCustomBoardIndex);
 
   // ① joined / ② not joined. Pressing the active one again goes back to "All".
   function toggleFilter(target: "JoinedOnly" | "NotJoinedOnly") {
@@ -32,8 +44,16 @@ export function MainControllerView() {
         <UserPopup />
       </BubbleButton>
 
+      <BubbleButton id="boardSettings" title="ボードの設定" buttonContent={<span>⚙</span>} bubbleWidth={440}>
+        <BoardSettingsPopup />
+      </BubbleButton>
+
       <BubbleButton id="message" title="メッセージを投稿" buttonContent={<span>✎</span>} bubbleWidth={420}>
         <MessagePopup />
+      </BubbleButton>
+
+      <BubbleButton id="boardAdd" title="ボードを追加" buttonContent={<span>＋</span>} bubbleWidth={440}>
+        <BoardAddPopup />
       </BubbleButton>
 
       <button
@@ -60,6 +80,22 @@ export function MainControllerView() {
       >
         ②
       </button>
+
+      {customBoards.map((board, index) => (
+        <button
+          key={index}
+          className={
+            activeFilter === "CustomOnly" && activeCustomBoardIndex === index
+              ? "square-button square-button--selected"
+              : "square-button"
+          }
+          title={board.name}
+          aria-label={board.name}
+          onClick={() => toggleCustomBoard(index)}
+        >
+          {boardInitial(board.name)}
+        </button>
+      ))}
     </div>
   );
 }

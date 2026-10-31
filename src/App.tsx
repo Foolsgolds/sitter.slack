@@ -1,9 +1,13 @@
 import { useEffect } from "react";
 import { getEmojiMap, tryAutoLogin } from "./api/commands";
 import { onChannelBatch, onRefreshComplete, onRefreshError } from "./api/events";
+import { hydrateBoards } from "./actions/boards";
 import { startWorkspaceRefresh } from "./actions/session";
 import { useAuthStore } from "./store/authStore";
-import { sortChannels, useChannelsStore } from "./store/channelsStore";
+import { useBoardStore } from "./store/boardStore";
+import { useChannelsStore } from "./store/channelsStore";
+import { usePersistBoardState } from "./store/usePersistBoardState";
+import { selectVisibleChannels } from "./store/visibleChannels";
 import { useUiStore } from "./store/uiStore";
 import { useEmojiStore } from "./store/emojiStore";
 import { AuthenticationView } from "./components/AuthenticationView";
@@ -26,6 +30,10 @@ function App() {
   const channels = useChannelsStore((s) => s.channels);
   const upsertMany = useChannelsStore((s) => s.upsertMany);
   const clearChannels = useChannelsStore((s) => s.clear);
+
+  const customBoards = useBoardStore((s) => s.customBoards);
+  const activeCustomBoardIndex = useBoardStore((s) => s.activeCustomBoardIndex);
+  const boardsHydrated = useBoardStore((s) => s.hydrated);
 
   const activeFilter = useUiStore((s) => s.activeFilter);
   const autoRefreshEnabled = useUiStore((s) => s.autoRefreshEnabled);
@@ -73,13 +81,20 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Restore custom boards and the saved filter before the first load, so the
+  // refresh knows which extra channels the boards need.
+  useEffect(() => {
+    hydrateBoards();
+  }, []);
+  usePersistBoardState();
+
   // Full workspace load right after authentication.
   useEffect(() => {
-    if (status !== "authenticated") return;
+    if (status !== "authenticated" || !boardsHydrated) return;
     clearChannels();
     startWorkspaceRefresh({ showLoading: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status]);
+  }, [status, boardsHydrated]);
 
   // 5-minute auto-refresh; startWorkspaceRefresh skips while one is in flight.
   useEffect(() => {
@@ -91,14 +106,7 @@ function App() {
   if (status === "checking") return <StartupSplash />;
   if (status !== "authenticated") return <AuthenticationView />;
 
-  const visibleChannels = sortChannels(
-    Array.from(channels.values()).filter((channel) => {
-      if (activeFilter === "All") return true;
-      if (activeFilter === "JoinedOnly") return channel.isMember;
-      if (activeFilter === "NotJoinedOnly") return !channel.isMember;
-      return false; // CustomOnly lands in M3
-    }),
-  );
+  const visibleChannels = selectVisibleChannels(channels, activeFilter, customBoards, activeCustomBoardIndex);
 
   return (
     <div className="app-shell">

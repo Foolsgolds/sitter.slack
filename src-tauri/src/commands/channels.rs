@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -29,9 +29,16 @@ fn get_client(state: &AppState) -> AppResult<SlackClient> {
         .ok_or(AppError::NotAuthenticated)
 }
 
+/// `extra_channel_ids` are channels outside the "times" prefix that custom
+/// boards need; they are loaded in the same pass as the prefixed channels.
 #[tauri::command]
-pub async fn refresh_workspace_data(app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
-    match refresh_workspace_data_inner(&app, &state).await {
+pub async fn refresh_workspace_data(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    extra_channel_ids: Option<Vec<String>>,
+) -> AppResult<()> {
+    let extra_ids: HashSet<String> = extra_channel_ids.unwrap_or_default().into_iter().collect();
+    match refresh_workspace_data_inner(&app, &state, &extra_ids).await {
         Ok(()) => {
             app.emit("refresh-complete", ()).ok();
             Ok(())
@@ -43,7 +50,11 @@ pub async fn refresh_workspace_data(app: AppHandle, state: State<'_, AppState>) 
     }
 }
 
-async fn refresh_workspace_data_inner(app: &AppHandle, state: &AppState) -> AppResult<()> {
+async fn refresh_workspace_data_inner(
+    app: &AppHandle,
+    state: &AppState,
+    extra_ids: &HashSet<String>,
+) -> AppResult<()> {
     let client = get_client(state)?;
     let workspace_url = state.workspace_url.read().unwrap().clone();
     let user_id = state.current_user_id.read().unwrap().clone();
@@ -77,7 +88,7 @@ async fn refresh_workspace_data_inner(app: &AppHandle, state: &AppState) -> AppR
                 is_member: channel.is_member,
                 is_archived: channel.is_archived,
             });
-            if channel.name.starts_with(CHANNEL_NAME_PREFIX) {
+            if channel.name.starts_with(CHANNEL_NAME_PREFIX) || extra_ids.contains(&channel.id) {
                 times_batch.push(channel);
             }
         }
@@ -107,6 +118,20 @@ async fn load_channel_batch(
     workspace_url: Option<&str>,
     oldest_by_channel: &HashMap<String, String>,
 ) -> AppResult<Vec<ChannelWithMessages>> {
+    load_channel_results(client, channels, workspace_url, oldest_by_channel)
+        .await
+        .into_iter()
+        .collect()
+}
+
+/// Like `load_channel_batch`, but keeps each channel's own result so a caller
+/// can tolerate individual failures.
+async fn load_channel_results(
+    client: &SlackClient,
+    channels: &[SlackConversation],
+    workspace_url: Option<&str>,
+    oldest_by_channel: &HashMap<String, String>,
+) -> Vec<AppResult<ChannelWithMessages>> {
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_CHANNEL_LOADS));
     let avatar_cache = Arc::new(AsyncMutex::new(HashMap::<String, Option<String>>::new()));
 
@@ -124,7 +149,7 @@ async fn load_channel_batch(
         }
     });
 
-    futures::future::join_all(tasks).await.into_iter().collect()
+    futures::future::join_all(tasks).await
 }
 
 async fn load_single_channel(
@@ -216,6 +241,48 @@ pub async fn list_all_channels(state: State<'_, AppState>) -> AppResult<Vec<Chan
     Ok(state.channel_catalog.read().unwrap().clone())
 }
 
+/// The catalog only carries the summary fields, so topic/purpose/member count
+/// are absent on channels loaded this way.
+fn conversation_from_summary(summary: &ChannelSummary) -> SlackConversation {
+    SlackConversation {
+        id: summary.channel_id.clone(),
+        name: summary.name.clone(),
+        is_member: summary.is_member,
+        is_archived: summary.is_archived,
+        ..Default::default()
+    }
+}
+
+/// Loads the given channels (resolved through the catalog) for custom boards.
+/// Channels that are unknown or fail to load are skipped so one bad channel
+/// cannot blank the whole board.
+#[tauri::command]
+pub async fn load_channels(
+    state: State<'_, AppState>,
+    channel_ids: Vec<String>,
+) -> AppResult<Vec<ChannelWithMessages>> {
+    let client = get_client(&state)?;
+    let workspace_url = state.workspace_url.read().unwrap().clone();
+    let conversations: Vec<SlackConversation> = {
+        let catalog = state.channel_catalog.read().unwrap();
+        channel_ids
+            .iter()
+            .filter_map(|id| catalog.iter().find(|c| &c.channel_id == id))
+            .map(conversation_from_summary)
+            .collect()
+    };
+
+    let results = load_channel_results(&client, &conversations, workspace_url.as_deref(), &HashMap::new()).await;
+    let mut loaded = Vec::with_capacity(results.len());
+    for (conversation, result) in conversations.iter().zip(results) {
+        match result {
+            Ok(channel) => loaded.push(channel),
+            Err(err) => tracing::warn!(channel = %conversation.name, "failed to load channel: {err}"),
+        }
+    }
+    Ok(loaded)
+}
+
 #[tauri::command]
 pub async fn refresh_channel(state: State<'_, AppState>, channel_id: String) -> AppResult<ChannelWithMessages> {
     let client = get_client(&state)?;
@@ -229,13 +296,7 @@ pub async fn refresh_channel(state: State<'_, AppState>, channel_id: String) -> 
         .cloned()
         .ok_or_else(|| AppError::Slack("channel not found in catalog".to_string()))?;
 
-    let conversation = SlackConversation {
-        id: summary.channel_id,
-        name: summary.name,
-        is_member: summary.is_member,
-        is_archived: summary.is_archived,
-        ..Default::default()
-    };
+    let conversation = conversation_from_summary(&summary);
     let avatar_cache = AsyncMutex::new(HashMap::new());
     load_single_channel(&client, &conversation, workspace_url.as_deref(), None, &avatar_cache).await
 }

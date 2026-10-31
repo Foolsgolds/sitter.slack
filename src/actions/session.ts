@@ -6,6 +6,7 @@ import { logout, refreshWorkspaceData } from "../api/commands";
 import { useAuthStore } from "../store/authStore";
 import { useChannelsStore } from "../store/channelsStore";
 import { useUiStore } from "../store/uiStore";
+import { customBoardChannelIds } from "./boards";
 
 /**
  * Kicks off `refresh_workspace_data`. Results stream back through the
@@ -21,7 +22,7 @@ export function startWorkspaceRefresh(options: { showLoading?: boolean } = {}) {
     ui.setStatus("チャンネルを読み込んでいます...", "loading");
   }
 
-  refreshWorkspaceData().catch((err) => {
+  refreshWorkspaceData(customBoardChannelIds()).catch((err) => {
     const current = useUiStore.getState();
     current.setRefreshing(false);
     current.setStatus(String(err), "error");

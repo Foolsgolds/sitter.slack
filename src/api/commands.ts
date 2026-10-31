@@ -18,10 +18,15 @@ export const tryAutoLogin = () => invoke<AuthResult | null>("try_auto_login");
 
 export const logout = () => invoke<void>("logout");
 
-export const refreshWorkspaceData = () => invoke<void>("refresh_workspace_data");
+/** `extraChannelIds`: non-"times*" channels that custom boards need loaded too. */
+export const refreshWorkspaceData = (extraChannelIds: string[] = []) =>
+  invoke<void>("refresh_workspace_data", { extraChannelIds });
 
 export const refreshChannel = (channelId: string) =>
   invoke<ChannelWithMessages>("refresh_channel", { channelId });
+
+export const loadChannels = (channelIds: string[]) =>
+  invoke<ChannelWithMessages[]>("load_channels", { channelIds });
 
 export const listAllChannels = () => invoke<ChannelSummary[]>("list_all_channels");
 

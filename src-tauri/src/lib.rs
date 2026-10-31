@@ -25,6 +25,7 @@ pub fn run() {
             commands::auth::logout,
             commands::channels::refresh_workspace_data,
             commands::channels::refresh_channel,
+            commands::channels::load_channels,
             commands::channels::list_all_channels,
             commands::channels::get_user_profile,
             commands::channels::get_emoji_map,
