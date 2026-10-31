@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 
 use crate::error::{AppError, AppResult};
@@ -38,12 +38,14 @@ pub async fn refresh_workspace_data(
     extra_channel_ids: Option<Vec<String>>,
 ) -> AppResult<()> {
     let extra_ids: HashSet<String> = extra_channel_ids.unwrap_or_default().into_iter().collect();
+    tracing::info!(custom_board_channels = extra_ids.len(), "workspace refresh started");
     match refresh_workspace_data_inner(&app, &state, &extra_ids).await {
         Ok(()) => {
             app.emit("refresh-complete", ()).ok();
             Ok(())
         }
         Err(err) => {
+            tracing::error!("workspace refresh failed: {err}");
             app.emit("refresh-error", err.to_string()).ok();
             Err(err)
         }
@@ -72,6 +74,7 @@ async fn refresh_workspace_data_inner(
     }
 
     let mut all_channels = Vec::new();
+    let mut loaded_count = 0;
     let mut cursor: Option<String> = None;
     let empty_oldest_map = HashMap::new();
 
@@ -96,6 +99,7 @@ async fn refresh_workspace_data_inner(
         if !times_batch.is_empty() {
             let loaded =
                 load_channel_batch(&client, &times_batch, workspace_url.as_deref(), &empty_oldest_map).await?;
+            loaded_count += loaded.len();
             app.emit("channel-batch", &loaded)
                 .map_err(|e| AppError::Slack(e.to_string()))?;
         }
@@ -106,6 +110,11 @@ async fn refresh_workspace_data_inner(
         }
     }
 
+    tracing::info!(
+        catalog_channels = all_channels.len(),
+        loaded_channels = loaded_count,
+        "workspace refresh finished"
+    );
     *state.channel_catalog.write().unwrap() = all_channels;
     Ok(())
 }
@@ -280,6 +289,7 @@ pub async fn load_channels(
             Err(err) => tracing::warn!(channel = %conversation.name, "failed to load channel: {err}"),
         }
     }
+    tracing::info!(requested = channel_ids.len(), loaded = loaded.len(), "channels loaded");
     Ok(loaded)
 }
 
@@ -324,14 +334,4 @@ pub async fn get_user_profile(state: State<'_, AppState>, user_id: String) -> Ap
 #[tauri::command]
 pub async fn get_emoji_map(state: State<'_, AppState>) -> AppResult<HashMap<String, String>> {
     Ok(state.emoji_map.read().unwrap().clone())
-}
-
-#[tauri::command]
-pub fn get_logs(app: AppHandle) -> AppResult<String> {
-    let log_dir = app
-        .path()
-        .app_log_dir()
-        .map_err(|e| AppError::Persistence(e.to_string()))?;
-    let path = log_dir.join("slacksitter.log");
-    Ok(std::fs::read_to_string(path).unwrap_or_default())
 }

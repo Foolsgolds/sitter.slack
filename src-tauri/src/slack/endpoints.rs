@@ -2,9 +2,10 @@
 //! `SlackService.cs` (both the SlackNet-backed calls and the raw-HttpClient
 //! calls) onto plain `reqwest` requests through `SlackClient`.
 //!
-//! Retry policy: everything here goes through `with_retry` EXCEPT channel
-//! listing (`list_channels_page`), matching the legacy app's behavior where
-//! `Conversations.List` was not wrapped in `ExecuteWithRetryAsync`.
+//! Retry policy: every call here goes through `with_retry`. The legacy app left
+//! `Conversations.List` out of its retry wrapper, but a rate-limited page then
+//! failed the whole workspace refresh (seen in practice on large workspaces),
+//! so channel listing is retried too.
 
 use std::collections::HashMap;
 
@@ -39,23 +40,19 @@ impl SlackClient {
     }
 
     /// One page of `conversations.list` (public+private, excluding archived).
-    /// NOT retried, matching the legacy app.
+    /// 200 per page keeps the page count (and so the tier-2 rate-limit
+    /// pressure) low on workspaces with many channels.
     pub async fn list_channels_page(
         &self,
         cursor: Option<&str>,
     ) -> AppResult<(Vec<SlackConversation>, Option<String>)> {
-        let cursor = cursor.unwrap_or("");
-        let body = self
-            .get(
-                "conversations.list",
-                &[
-                    ("types", "public_channel,private_channel"),
-                    ("exclude_archived", "true"),
-                    ("limit", "100"),
-                    ("cursor", cursor),
-                ],
-            )
-            .await?;
+        let query = [
+            ("types", "public_channel,private_channel"),
+            ("exclude_archived", "true"),
+            ("limit", "200"),
+            ("cursor", cursor.unwrap_or("")),
+        ];
+        let body = self.with_retry(|| self.get("conversations.list", &query)).await?;
 
         let channels: Vec<SlackConversation> = serde_json::from_value(
             body.get("channels").cloned().unwrap_or(json!([])),

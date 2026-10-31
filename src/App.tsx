@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { getEmojiMap, tryAutoLogin } from "./api/commands";
+import { getEmojiMap, tryAutoLogin, writeLog } from "./api/commands";
 import { onChannelBatch, onRefreshComplete, onRefreshError } from "./api/events";
 import { hydrateBoards } from "./actions/boards";
 import { startWorkspaceRefresh } from "./actions/session";
@@ -72,6 +72,8 @@ function App() {
     const unlistenError = onRefreshError((message) => {
       setRefreshing(false);
       setStatus(message, "error");
+      // The backend already logged the failure; this marks that the UI surfaced it.
+      void writeLog("warn", `refresh error shown to the user: ${message}`);
     });
     return () => {
       unlistenBatch.then((unlisten) => unlisten());

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { BoardFilter } from "../types/models";
 
-export type PopupId = "user" | "message" | "boardSettings" | "boardAdd";
+export type PopupId = "log" | "user" | "message" | "boardSettings" | "boardAdd";
 
 export interface ProfileTarget {
   userId: string;

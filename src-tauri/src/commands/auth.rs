@@ -22,6 +22,7 @@ async fn authenticate_inner(state: &AppState, token_value: String) -> AppResult<
     state.user_image_cache.write().unwrap().clear();
 
     token::save_token(&token_value)?;
+    tracing::info!(%user_id, "authenticated");
 
     Ok(AuthResult {
         workspace_url,
@@ -38,11 +39,15 @@ pub async fn authenticate(state: State<'_, AppState>, token_value: String) -> Ap
 #[tauri::command]
 pub async fn try_auto_login(state: State<'_, AppState>) -> AppResult<Option<AuthResult>> {
     let Some(saved_token) = token::load_token()? else {
+        tracing::info!("no saved token; showing the sign-in screen");
         return Ok(None);
     };
     match authenticate_inner(&state, saved_token).await {
         Ok(result) => Ok(Some(result)),
-        Err(_) => Ok(None),
+        Err(err) => {
+            tracing::warn!("saved token was rejected: {err}");
+            Ok(None)
+        }
     }
 }
 
@@ -55,5 +60,6 @@ pub async fn logout(state: State<'_, AppState>) -> AppResult<()> {
     state.emoji_map.write().unwrap().clear();
     state.channel_catalog.write().unwrap().clear();
     token::delete_token()?;
+    tracing::info!("logged out; saved token deleted");
     Ok(())
 }

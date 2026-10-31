@@ -28,5 +28,7 @@ pub async fn post_message(state: State<'_, AppState>, channel: String, text: Str
         .map(|c| c.channel_id.clone())
         .ok_or_else(|| AppError::Slack(format!("channel not found: {channel}")))?;
 
-    client.post_message(&channel_id, trimmed_text).await
+    client.post_message(&channel_id, trimmed_text).await?;
+    tracing::info!(%channel, "message posted");
+    Ok(())
 }

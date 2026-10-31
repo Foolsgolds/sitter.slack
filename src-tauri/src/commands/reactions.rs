@@ -28,8 +28,11 @@ pub async fn toggle_reaction(
 
     let already_reacted = client.has_user_reaction(&channel_id, &ts, &name, &user_id).await?;
     if already_reacted {
-        client.remove_reaction(&channel_id, &ts, &name).await
+        client.remove_reaction(&channel_id, &ts, &name).await?;
+        tracing::info!(%channel_id, reaction = %name, "reaction removed");
     } else {
-        client.add_reaction(&channel_id, &ts, &name).await
+        client.add_reaction(&channel_id, &ts, &name).await?;
+        tracing::info!(%channel_id, reaction = %name, "reaction added");
     }
+    Ok(())
 }

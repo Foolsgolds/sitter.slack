@@ -1,7 +1,7 @@
 // Custom-board operations. Like session.ts these use getState() so they can be
 // called from event handlers; persistence is handled by usePersistBoardState.
 
-import { loadChannels, loadCustomBoards } from "../api/commands";
+import { loadChannels, loadCustomBoards, writeLog } from "../api/commands";
 import { DEFAULT_BOARD_NAME, MAX_CUSTOM_BOARDS } from "../constants";
 import { useBoardStore } from "../store/boardStore";
 import { useChannelsStore } from "../store/channelsStore";
@@ -64,6 +64,7 @@ export function addBoard(name: string, channelIds: string[]): boolean {
   setBoards([...customBoards, board], customBoards.length);
   useUiStore.getState().setActiveFilter("CustomOnly");
   useUiStore.getState().setOpenPopup(null);
+  void writeLog("info", `custom board added: ${board.name} (${board.channelIds.length} channels)`);
   void loadMissingChannels(board.channelIds);
   return true;
 }
@@ -78,6 +79,7 @@ export function updateBoard(index: number, name: string, channelIds: string[]) {
     index,
   );
   useUiStore.getState().setOpenPopup(null);
+  void writeLog("info", `custom board updated: ${board.name} (${board.channelIds.length} channels)`);
   void loadMissingChannels(board.channelIds);
 }
 
@@ -91,6 +93,7 @@ export function deleteBoard(index: number) {
   nextActive = remaining.length === 0 ? -1 : Math.min(Math.max(nextActive, 0), remaining.length - 1);
 
   setBoards(remaining, nextActive);
+  void writeLog("info", `custom board deleted: ${customBoards[index].name}`);
   const ui = useUiStore.getState();
   if (ui.activeFilter === "CustomOnly") ui.setActiveFilter("JoinedOnly");
   ui.setOpenPopup(null);

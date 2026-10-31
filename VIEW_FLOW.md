@@ -1,232 +1,148 @@
 # SlackSitter ボード表示ロジック・フロー
 
-Slack からデータを取得し、ボード UI に表示するまでの全体フローを整理したドキュメントです。
+Slack からデータを取得し、ボード (チャンネルの横並び) に表示するまでの流れです。
 
-## 1. データ取得のトリガー
-
-| トリガー | 起点 | 呼ばれるメソッド |
-|---------|------|----------------|
-| **初回認証成功** | `AuthenticateWithToken()` | → `RefreshWorkspaceDataAsync()` |
-| **自動更新タイマー** | `_autoRefreshTimer`（5分間隔の `DispatcherTimer`） | → `RefreshWorkspaceDataAsync()` |
-| **手動リフレッシュ** | ログポップアップのリフレッシュボタン | → `RefreshActiveBoardChannelsAsync()`（差分更新対応） |
-| **トークン更新** | ユーザーポップアップでトークン変更 | → `RefreshWorkspaceDataAsync()` |
-| **カスタムボード作成/編集** | チャンネル追加リクエスト | → `MainController_AddChannelsRequested()` |
-
-## 2. データ取得フロー
+## 1. 全体像
 
 ```
-RefreshWorkspaceDataAsync()
- ├── Task.WhenAll（並列実行）
- │     ├── LoadCustomEmojiAsync()     ← emoji.list API
- │     │     → _customEmojiMap に格納
- │     │     → 絵文字URLを事前解決し MessageRenderContext.ResolvedEmojiUrls に設定
- │     │
- │     └── LoadUserAvatarAsync()      ← auth.test → users.info API
- │           → 現在のユーザー名・アバター画像を取得
- │
- └── LoadChannelsAsync()              ← conversations.list API（バッチ取得）
-       │
-       ├── GetChannelBatchesAsync() で100件ずつチャンネル取得
-       │     → "times" プレフィックスのチャンネルをフィルタ
-       │
-       └── LoadChannelBatchAsync()（バッチごとに並列処理）
-             │  SemaphoreSlim(10) で最大10並列に制限
-             │
-             ├── GetChannelMessagesAsync(channelId, 10, oldest)
-             │     ← conversations.history API（最新10件、差分更新対応）
-             │     ← ExecuteWithRetryAsync() でリトライ付き
-             │
-             ├── Task.WhenAll: GetThreadRepliesAsync(channelId, threadTs)
-             │     ← conversations.replies API（reply_count > 0 のメッセージのみ、並列取得）
-             │     ← ExecuteWithRetryAsync() でリトライ付き
-             │
-             └── Task.WhenAll: GetUserImageUrlAsync(userId)
-                   ← users.info API（キャッシュ付き、リトライ付き）
+Slack Web API
+   ▲  (reqwest)
+Rust: commands/ ── slack/ (client, endpoints, parser, extract, models)
+   │   Tauri コマンド (invoke)            ▲
+   │   Tauri イベント (emit)              │
+   ▼                                      │
+React: api/ ── actions/ ── store/ (zustand) ── components/
 ```
 
-### 差分更新フロー（手動リフレッシュ・自動リフレッシュ時）
+- Slack API の呼び出し、メッセージ本文の解析、画像 URL の抽出はすべて Rust 側で行う。
+- Rust は画面にそのまま描ける「表示用モデル」(`ChannelWithMessages`) を返す。
+- フロントエンドは zustand のストアに入れて描画するだけで、Slack の生データは扱わない。
 
-```
-RefreshActiveBoardChannelsAsync()
- ├── 既存チャンネルの LastFetchedTs を収集
- ├── LoadChannelBatchAsync(channels, workspaceUrl, oldestByChannelId)
- │     → oldest パラメータで前回取得以降の新着メッセージのみ取得
- └── UpsertChannelAcrossBoards() で既存データを更新
-```
+## 2. データ取得のトリガー
 
-## 3. データ変換レイヤー
+| トリガー | 動作 |
+|----------|------|
+| 起動時 | 保存済みトークンで自動ログイン (`try_auto_login`)。成功すれば全体更新へ |
+| 認証成功 / トークン変更 | 全体更新 (`refresh_workspace_data`) |
+| 5 分ごと (自動更新が有効なとき) | 全体更新。更新中なら何もしない |
+| 更新ボタン (↻) | 表示中のボードのチャンネルだけを再取得 (`load_channels`) |
+| カスタムボードの追加 / 変更 / 選択 | ストアにないチャンネルだけを取得 (`load_channels`) |
+| リアクションの操作 | 対象チャンネルを 1 件再取得 (`refresh_channel`) |
+| メッセージの投稿 | 投稿先がボードにあれば、そのチャンネルを 1 件再取得 |
 
-生の Slack データを表示用モデルに変換する。
+更新ボタンは、表示中のボードに載っているチャンネルを全件取り直します。
+差分 (新着だけ) の取得は行いません。
+新着だけで置き換えるとメッセージが消えるうえ、リアクションやスレッド返信の更新も反映されないためです。
+取得できたチャンネルが 0 件だった場合 (チャンネル一覧が未取得のときなど) は、全体更新に切り替えます。
 
-```
-SlackNet.Events.MessageEvent
-        ↓ 変換
-MessageDisplayItem
- ├── Segments: IReadOnlyList<MessageInlineSegment>
- │     ParseSegments() でテキストを解析（2パス最適化）：
- │     ├── 1パス目: Regex.Matches() でリンクと絵文字を一括検出
- │     ├── 2パス目: 装飾トグル（太字/斜体/取消線/コード）を処理
- │     ├── プレーンテキスト（太字/斜体/取消線/コード装飾）
- │     ├── リンク（<url|label> パターン）
- │     └── 絵文字（:name: パターン）
- │
- ├── Images: IReadOnlyList<MessageImageItem>
- │     ExtractImages() で画像URL抽出（PropertyInfo キャッシュ付きリフレクション）：
- │     ├── Files（mimetype が image/* のもの）
- │     └── Attachments / Blocks
- │
- ├── Reactions: IReadOnlyList<MessageReactionItem>
- │     ExtractReactions() でリアクション取得（名前＋件数、PropertyInfo キャッシュ付き）
- │
- ├── Replies: IReadOnlyList<MessageDisplayItem>（再帰的に生成）
- │
- ├── UserAvatarUri    ← ユーザーアバター画像
- └── PermalinkUri     ← Slack上の直リンク
-```
+## 3. 全体更新のフロー (`refresh_workspace_data`)
 
-変換された `MessageDisplayItem` は `ChannelWithMessages` にまとめられる：
+1. 絵文字一覧 (`emoji.list`) と自分のプロフィール (`users.info`) を並列で取得する。
+2. `conversations.list` をページごとに取得する。アーカイブ済みは除く。
+3. 各ページで、次のチャンネルをボード用として選ぶ。
+   - 名前が `times` で始まる (大文字小文字を区別する)
+   - フロントエンドから渡された `extraChannelIds` (カスタムボードが使うチャンネル) に含まれる
+4. 選んだチャンネルを最大 10 並列で読み込む。
+   - `conversations.history` (10 件)
+   - 返信のあるメッセージには `conversations.replies` (20 件)
+   - 投稿者のアバター (`users.info`、1 バッチ内でキャッシュ)
+5. ページごとの結果を `channel-batch` イベントで送る。フロントエンドは届いた順にストアへ入れる。
+6. 全ページの取得後に、全チャンネルのカタログを保存し、`refresh-complete` を送る。失敗したときは `refresh-error` を送る。
 
-```
-ChannelWithMessages
- ├── Channel: SlackNet.Conversation（チャンネル情報）
- ├── Messages: List<MessageDisplayItem>（表示用メッセージ一覧）
- └── LastFetchedTs: string?（差分更新用の最終取得タイムスタンプ）
-```
+ページ単位で送るため、全チャンネルの読み込みが終わる前から表示が始まります。
 
-## 4. コレクション管理
+## 4. 表示用モデルへの変換 (Rust)
 
-4つの `BatchObservableCollection` でチャンネルを管理し、フィルタで切り替える。
+`slack/models.rs` の `build_message_display_item` が、Slack のメッセージ 1 件を `MessageDisplayItem` に変える。
 
-```
-_allDisplayedChannels          ← 全チャンネル
-_joinedDisplayedChannels       ← 参加中のみ（IsMember=true）
-_notJoinedDisplayedChannels    ← 未参加のみ（IsMember=false）
-_customDisplayedChannels       ← ユーザー選択のカスタムボード
-```
+| 処理 | 担当 |
+|------|------|
+| 本文を `MessageInlineSegment` の列に分割 (太字、斜体、取り消し線、コード、リンク、絵文字) | `slack/parser.rs` |
+| 添付やファイルから画像 URL の候補を抽出 | `slack/extract.rs` |
+| カスタム絵文字の alias を解決 | `slack/emoji.rs` |
+| パーマリンクの組み立て | `slack/models.rs` |
 
-**ソート順**（`InsertDisplayedChannel()` / `CompareChannels()`）:
+本文の解析は、旧 WinUI 版と同じ「トグル方式」を引き継いでいます。
+`*` `_` `~` は、コードの外で開始 / 終了を切り替えます。
+バッククォートはコードの開始 / 終了を切り替え、絵文字はコードの外だけで解釈します。
+先に HTML エンティティを戻します。
+`<url|label>` 形式のリンクは、ホスト名で表示します。
 
-1. 参加中チャンネルを先に
-2. 最終メッセージが新しい順
-3. チャンネル名アルファベット順
+## 5. ストアと表示対象の選択 (React)
 
-**フィルタ切替**: `_currentChannelDisplayFilter` で表示するボードを選択（All / JoinedOnly / NotJoinedOnly / CustomOnly）
-
-**バッチ更新**: `BeginBatchUpdate()` / `EndBatchUpdate()` で複数チャンネルの挿入を1回の `CollectionChanged(Reset)` にまとめる
-
-## 5. UI レンダリング階層
-
-```
-MainWindow.xaml
- │
- ├── StatusPanelView         ← 状態表示（認証状態、エラー等）
- ├── MainControllerView      ← フィルタ切替、カスタムボード管理
- │
- └── ChannelBoardView × 4    ← フィルタごとに1つずつ
-       │  ScrollViewer + ItemsRepeater + HorizontalVirtualizingLayout
-       │  （ビューポート内のカードのみ実体化する仮想化レイアウト）
-       │
-       └── ChannelCardView（チャンネルカード、XAML テンプレート）
-             ├── ヘッダー Border（チャンネル名 HyperlinkButton、参加状態で色分け）
-             └── ScrollViewer
-                   └── StackPanel（MessagesPanel、コードビハインドで動的構築）
-                         │
-                         └── MessageItemView（メッセージ1件、C#コードで構築）
-                               ├── タイムスタンプ（HyperlinkButton → Slack直リンク）
-                               ├── アバター画像（MessageRenderContext.PopulateAvatar）
-                               ├── メッセージ本文カード
-                               │    ├── RichTextBlock（MessageRenderContext.BuildMessageParagraph）
-                               │    └── 画像スタック（ボタンクリックで遅延読込）
-                               ├── リアクション表示（MessageRenderContext.PopulateReaction）
-                               └── スレッド返信（MessageItemView を再帰表示）
-```
-
-## 6. コンテンツ描画
-
-`MessageRenderContext`（シングルトン）がメッセージ描画のヘルパーメソッドとリソースを提供する。
-`MessageItemView.BuildContent()` 内で直接呼び出し、Loaded イベントハンドラは使用しない。
-
-| メソッド / リソース | 処理内容 |
-|-------------------|---------|
-| `BuildMessageParagraph()` | `Segments` をもとに `Run`（テキスト装飾）, `Hyperlink`（リンク）, 絵文字 `Image`（キャッシュ経由）を Paragraph に構築 |
-| `PopulateAvatar()` | ユーザーアバターを `ImageBrush` で設定（`BitmapImageCache` 経由） |
-| `PopulateReaction()` | 絵文字画像（事前解決済みURL + キャッシュ）or テキスト + カウントを Border に設定 |
-| `ResolvedEmojiUrls` | エイリアスチェーン解決済みの絵文字URL辞書（O(1) ルックアップ） |
-| `ImageCache` | `BitmapImageCache` — URL→BitmapImage の WeakReference キャッシュ |
-| `ShowMessageImageButton_Click` | 画像を遅延読込（候補URLを優先順に試行、リダイレクト対応、Content-Type検証）※MainWindow で処理 |
-
-## 7. キャッシュ・最適化
-
-| 最適化 | 詳細 |
+| ストア | 内容 |
 |--------|------|
-| **BitmapImage キャッシュ** | `BitmapImageCache`（WeakReference）で同じURL の BitmapImage を共有。`DecodePixelWidth` でデコードサイズ制限（アバター64px、絵文字24px） |
-| **ユーザー画像URLキャッシュ** | `_userImageUrlCache`（Dictionary）で userId → 画像URL をキャッシュ |
-| **並列メッセージ取得** | `SemaphoreSlim(10)` で最大10チャンネル同時取得 |
-| **スレッド返信の並列取得** | `Task.WhenAll()` で1チャンネル内のスレッド返信を同時取得 |
-| **チャンネルバッチ取得** | `IAsyncEnumerable` で100件ずつ yield、到着順に即UI反映 |
-| **スレッド取得の条件分岐** | `reply_count > 0` のメッセージのみスレッド取得（キャッシュ済みデリゲートで高速判定） |
-| **画像の遅延読込** | ボタンクリック時にのみHTTP取得（初回表示のコスト削減） |
-| **絵文字URLの事前解決** | `alias:xxx` チェーンをデータ取得時に1回だけ解決し `ResolvedEmojiUrls` に格納 |
-| **メッセージパーサー最適化** | `Regex.Matches()` で一括検出 → Dictionary ルックアップの2パス方式（O(n)） |
-| **リフレクションキャッシュ** | `ConcurrentDictionary<(Type, string), PropertyInfo?>` で PropertyInfo を型・プロパティ名ごとにキャッシュ |
-| **ReplyCount デリゲートキャッシュ** | `PropertyInfo.GetGetMethod()` を起動時に1回だけ取得、`Func<>` デリゲートにキャッシュ |
-| **バッチ UI 更新** | `BatchObservableCollection` で複数 Insert を1回の Reset 通知にまとめる |
-| **UI 仮想化** | `ItemsRepeater` + `HorizontalVirtualizingLayout` で画面外カードを生成しない |
-| **差分更新** | `LastFetchedTs` + `oldest` パラメータで前回以降の新着メッセージのみ取得 |
-| **API リトライ** | `ExecuteWithRetryAsync()` で指数バックオフ + 429 レート制限対応（最大3回） |
-| **カスタムボード永続化** | `CustomBoardStorageService` でボード設定を保存・復元 |
+| `authStore` | 認証状態 (`checking` / `loggedOut` / `authenticating` / `authenticated`)、ユーザー ID、アバター |
+| `channelsStore` | `channelId → ChannelWithMessages` の Map |
+| `emojiStore` | カスタム絵文字の名前 → URL |
+| `boardStore` | カスタムボード (名前とチャンネル ID の一覧)、選択中のボード、読み込み済みフラグ |
+| `uiStore` | 表示フィルター、更新中フラグ、自動更新の有効 / 無効、開いている吹き出し、状態メッセージ、画像プレビュー、ユーザー情報ダイアログの対象 |
 
-## 8. フロー全体の概略図
+表示するチャンネルは `store/visibleChannels.ts` の `selectVisibleChannels` が決めます。
+
+| フィルター | 表示 |
+|-----------|------|
+| `All` | 名前が `times` で始まる全チャンネル |
+| `JoinedOnly` | 上のうち参加中 |
+| `NotJoinedOnly` | 上のうち未参加 |
+| `CustomOnly` | 選択中のカスタムボードのチャンネル (選んだ順) |
+
+`All` / `JoinedOnly` / `NotJoinedOnly` の並びは、参加中を先に、次に最終メッセージの新しい順、最後に名前順です。
+ストアにはカスタムボード用に読み込んだ `times` 以外のチャンネルも入りますが、この 3 つのフィルターには出ません。
+
+## 6. カスタムボードの保存
+
+- `boardStore` と表示フィルターが変わるたびに、`usePersistBoardState` が `custom-board.json` を書く。
+- 起動時に `hydrateBoards` が読み込み、読み込みが終わるまでは保存しない (読み込み前に既存ファイルを上書きしないため)。
+- 最初の全体更新は、この読み込みが終わってから始める (ボードのチャンネルを `extraChannelIds` として渡すため)。
+- Rust 側 (`persistence/boards.rs` の `normalize`) が、保存と読み込みの両方で次を整える。
+  - 空の名前は「カスタムボード」にする
+  - 重複と空のチャンネル ID を除く
+  - チャンネルのないボードを除く
+  - 最大 10 件にする
+  - 選択中の番号とフィルターを矛盾のない値にする
+
+## 7. 画面の構成
 
 ```
-[タイマー/ユーザー操作]
-        │
-        ▼
-RefreshWorkspaceDataAsync()
-        │
-        ├─→ Task.WhenAll: Emoji + Avatar 並列取得
-        │
-        ▼
-LoadChannelsAsync() / RefreshActiveBoardChannelsAsync()（差分更新対応）
-        │
-        ├─→ Slack API 呼び出し（SemaphoreSlim(10) で並列制御、リトライ付き）
-        │     conversations.list → conversations.history(oldest) → conversations.replies
-        │     users.info（キャッシュ付き）/ emoji.list
-        │
-        ▼
-MessageDisplayItem に変換（2パスパーサー・画像抽出・リアクション抽出）
-        │
-        ▼
-ChannelWithMessages にまとめる（LastFetchedTs 記録）
-        │
-        ▼
-BatchObservableCollection に挿入（ソート済み、バッチ通知）
-        │
-        ▼
-ItemsRepeater + HorizontalVirtualizingLayout で仮想化描画
-        │
-        ▼
-ChannelCardView（XAML テンプレート）→ MessageItemView（C# 直接構築）
-        │
-        ▼
-MessageRenderContext で描画（BitmapImageCache + 事前解決済み絵文字）
+App
+├─ StartupSplash / AuthenticationView   (認証状態による)
+├─ StatusPanelView                      状態メッセージ
+├─ ChannelBoardView                     チャンネル列 (横方向に仮想化)
+│   └─ ChannelCardView
+│       └─ MessageItemView (返信は再帰)
+│           ├─ MessageBody              segments の描画
+│           ├─ MessageImages            「画像を表示」で取得
+│           └─ ReactionBar
+├─ MainControllerView                   下部のコントローラー (CONTROLER.md)
+├─ ImagePreviewOverlay
+└─ UserProfileDialog
 ```
+
+- チャンネル列は `@tanstack/react-virtual` で見えている範囲だけを描画する。カードの幅は通常 320px、スレッド返信のあるチャンネルは 356px。
+- メッセージのアバターをクリックすると、`UserProfileDialog` が開く。
+
+## 8. 画像とアバター
+
+| 種類 | 取得方法 |
+|------|----------|
+| アバター | 公開 URL なので `<img>` で直接読み込む |
+| メッセージの画像 | 「画像を表示」を押したときに `fetch_image` で取得し、data URL にして表示する。クリックで拡大 (Esc、背景クリック、閉じるボタンで閉じる) |
+| カスタム絵文字 | URL を `<img>` で直接読み込む |
+
+メッセージの画像は Bearer トークンが必要で、WebView の `<img>` では付けられません。
+そのため Rust 側で取得します。
 
 ## 9. 主要ファイル一覧
 
 | ファイル | 役割 |
-|---------|------|
-| `MainWindow.xaml.cs` | データ取得・変換・UI更新の全体オーケストレーション |
-| `MainWindow.xaml` | レイアウト定義（4つのボードビュー、ステータスパネル、メインコントローラー） |
-| `Services/SlackService.cs` | Slack API ラッパー（チャンネル、メッセージ、ユーザー、絵文字）+ リトライ機構 |
-| `Services/MessageRenderContext.cs` | メッセージ描画コンテキスト（RichText構築、アバター、リアクション、絵文字解決） |
-| `Services/BitmapImageCache.cs` | URL→BitmapImage の WeakReference キャッシュ（DecodePixelWidth 制限付き） |
-| `Views/ChannelBoardView.xaml(.cs)` | ItemsRepeater + HorizontalVirtualizingLayout による仮想化ボードコンテナ |
-| `Views/HorizontalVirtualizingLayout.cs` | 水平方向の仮想化レイアウト（ビューポート内のみ実体化） |
-| `Views/ChannelCardView.xaml(.cs)` | チャンネルカード（XAML テンプレート + コードビハインドで UpdateContent） |
-| `Views/MessageItemView.cs` | メッセージ表示（C#コードで構築、MessageRenderContext 経由で描画） |
-| `Models/ChannelWithMessages.cs` | チャンネル＋メッセージ＋差分更新用タイムスタンプ |
-| `Models/MessageDisplayItem.cs` | パース済みメッセージ（セグメント、画像、リアクション、返信）+ PropertyInfo キャッシュ |
-| `Models/MessageInlineSegment.cs` | テキストセグメント（タイプ、装飾、オプションURI） |
-| `Models/BatchObservableCollection.cs` | バッチ更新対応 ObservableCollection（通知抑制 + Reset 1回） |
-| `Services/CustomBoardStorageService.cs` | カスタムボード設定の永続化 |
+|----------|------|
+| `src-tauri/src/commands/channels.rs` | 全体更新、チャンネル読み込み、ユーザー情報、絵文字 |
+| `src-tauri/src/commands/boards.rs` | カスタムボードの読み書き |
+| `src-tauri/src/slack/models.rs` | 表示用モデルと変換 |
+| `src-tauri/src/slack/parser.rs` | 本文の解析 |
+| `src/App.tsx` | 起動、イベント購読、自動更新、表示チャンネルの選択 |
+| `src/actions/session.ts` | 全体更新、表示中ボードの更新、ログアウト |
+| `src/actions/boards.ts` | カスタムボードの追加・変更・削除・選択 |
+| `src/store/visibleChannels.ts` | フィルターごとの表示対象 |
+| `src/components/ChannelBoardView.tsx` | チャンネル列の仮想化 |

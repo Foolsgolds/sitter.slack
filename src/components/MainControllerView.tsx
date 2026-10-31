@@ -1,11 +1,12 @@
 import { toggleCustomBoard } from "../actions/boards";
-import { startWorkspaceRefresh } from "../actions/session";
+import { refreshActiveBoard } from "../actions/session";
 import { useAuthStore } from "../store/authStore";
 import { useBoardStore } from "../store/boardStore";
 import { useUiStore } from "../store/uiStore";
 import { BoardAddPopup } from "./BoardAddPopup";
 import { BoardSettingsPopup } from "./BoardSettingsPopup";
 import { BubbleButton } from "./BubbleButton";
+import { LogPopup } from "./LogPopup";
 import { MessagePopup } from "./MessagePopup";
 import { UserPopup } from "./UserPopup";
 
@@ -17,8 +18,8 @@ function boardInitial(name: string): string {
 /**
  * Bottom-center controller bar (see CONTROLER.md). Circle buttons open a
  * bubble popup; rounded-square buttons carry a selected state instead.
- * Order follows the legacy bar: user, gear, message, plus, refresh, ①, ②,
- * then one button per custom board. The log viewer arrives in a later milestone.
+ * Order follows the legacy bar: log, user, gear, message, plus, refresh, ①, ②,
+ * then one button per custom board.
  */
 export function MainControllerView() {
   const avatarUri = useAuthStore((s) => s.avatarUri);
@@ -35,6 +36,10 @@ export function MainControllerView() {
 
   return (
     <div className="controller">
+      <BubbleButton id="log" title="ログ" buttonContent={<span>📋</span>} bubbleWidth={560}>
+        <LogPopup />
+      </BubbleButton>
+
       <BubbleButton
         id="user"
         title="ユーザー"
@@ -58,9 +63,9 @@ export function MainControllerView() {
 
       <button
         className={isRefreshing ? "square-button square-button--selected" : "square-button"}
-        title="データ取得"
-        aria-label="データ取得"
-        onClick={() => startWorkspaceRefresh()}
+        title="表示中のボードを再取得"
+        aria-label="表示中のボードを再取得"
+        onClick={() => void refreshActiveBoard()}
         disabled={isRefreshing}
       >
         ↻

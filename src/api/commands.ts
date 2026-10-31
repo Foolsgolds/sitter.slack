@@ -50,3 +50,7 @@ export const loadCustomBoards = () => invoke<CustomBoardState>("load_custom_boar
 
 export const saveCustomBoards = (boardState: CustomBoardState) =>
   invoke<void>("save_custom_boards", { boardState });
+
+/** Records a UI-side event in the shared log file. Never pass secrets. */
+export const writeLog = (level: "info" | "warn" | "error", message: string) =>
+  invoke<void>("write_log", { level, message }).catch(() => {});

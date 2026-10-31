@@ -1,253 +1,103 @@
 # Models ドキュメント
 
-## 現在のクラス一覧
+表示用モデルの一覧です。
+Rust (`src-tauri/src/slack/models.rs`) が正で、TypeScript (`src/types/models.ts`) はそれに合わせた型です。
+Rust 側は `serde` の `rename_all = "camelCase"` で JSON にしているため、フィールド名は TypeScript と同じ camelCase になります。
+2 つのファイルは今のところ手で同期しています。
 
-| クラス / enum | ファイル | 種別 |
-|---|---|---|
-| `ChannelWithMessages` | `Models/ChannelWithMessages.cs` | 集約モデル |
-| `MessageDisplayItem` | `Models/MessageDisplayItem.cs` | 表示モデル |
-| `MessageInlineSegment` | `Models/MessageInlineSegment.cs` | 値オブジェクト |
-| `MessageImageItem` | `Models/MessageImageItem.cs` | 値オブジェクト |
-| `MessageReactionItem` | `Models/MessageReactionItem.cs` | 値オブジェクト |
-| `MessageInlineSegmentType` | `Models/MessageInlineSegmentType.cs` | enum |
-| `BatchObservableCollection<T>` | `Models/BatchObservableCollection.cs` | コレクション |
-| `DownloadedImageResult` | `MainWindow.xaml.cs` (内部クラス) | ヘルパー |
+## クラス一覧
 
----
+| 型 | 役割 |
+|----|------|
+| `ChannelWithMessages` | 1 チャンネルとそのメッセージ (ボードの 1 列) |
+| `MessageDisplayItem` | 1 メッセージ。本文、画像、リアクション、スレッド返信を持つ |
+| `MessageInlineSegment` | 本文の 1 区間 (テキスト / リンク / 絵文字) |
+| `MessageImageItem` | 画像 1 枚 (候補 URL の一覧) |
+| `MessageReactionItem` | リアクション 1 種類 (名前と件数) |
+| `ChannelSummary` | チャンネルの要約。全チャンネルのカタログ用 |
+| `SlackUserProfileInfo` | ユーザー情報ダイアログ用のプロフィール |
+| `AuthResult` | 認証結果 (ワークスペース URL、ユーザー ID、アバター) |
+| `CustomBoardDefinition` / `CustomBoardState` | カスタムボードの保存形式 |
 
-## 各クラスの役割
+## 各型の役割
 
 ### `ChannelWithMessages`
 
-1 つの Slack チャンネルと、その表示対象メッセージ群をまとめる集約モデル。
-画面の「1 列分の表示データ」に対応する。
+| フィールド | 内容 |
+|-----------|------|
+| `channelId` | チャンネル ID (ボードのキー) |
+| `channelUri` | Slack のチャンネル URL |
+| `name` | チャンネル名 |
+| `topicValue` / `purposeValue` | トピック / 説明 (全体更新で取得したときだけ入る) |
+| `numMembers` | メンバー数 (同上) |
+| `isMember` | 参加中か |
+| `lastMessageTs` | 最新メッセージの `ts` (並び順に使う) |
+| `lastFetchedTs` | 最後に取得したメッセージの `ts` |
+| `messages` | `MessageDisplayItem` の一覧 (新しい順) |
 
-**プロパティ**
-
-| プロパティ | 型 | 概要 |
-|---|---|---|
-| `Channel` | `SlackNet.Conversation` | Slack API から取得した生チャンネル |
-| `Messages` | `List<MessageDisplayItem>` | 表示対象メッセージ |
-| `ChannelUri` | `Uri?` | Slack の該当チャンネル URL |
-| `Name` | `string` | チャンネル名 |
-| `IsMember` | `bool` | 自分が参加しているか |
-| `LastMessageTs` | `string?` | 最新メッセージのタイムスタンプ |
-| `LastFetchedTs` | `string?` | 最後にデータ取得した時点の最新Ts（差分更新用） |
-| `TopicValue` | `string?` | チャンネルトピック |
-| `PurposeValue` | `string?` | チャンネル説明 |
-| `NumMembers` | `int?` | メンバー数 |
-
----
+`load_channels` と `refresh_channel` はチャンネルのカタログから作るため、トピック、説明、メンバー数は入りません。
 
 ### `MessageDisplayItem`
 
-`SlackNet.Events.MessageEvent` を UI 表示用に変換したモデル。
-テキスト解析・画像抽出・リアクション抽出も内包している。
-
-**プロパティ**
-
-| プロパティ | 型 | 概要 |
-|---|---|---|
-| `User` | `string?` | 投稿者の UserId |
-| `Ts` | `string?` | タイムスタンプ |
-| `Text` | `string?` | 生テキスト |
-| `UserAvatarUri` | `Uri?` | アバター画像 URL |
-| `PermalinkUri` | `Uri?` | メッセージへの直リンク |
-| `Segments` | `IReadOnlyList<MessageInlineSegment>` | パース済みインライン要素 |
-| `Images` | `IReadOnlyList<MessageImageItem>` | 添付画像 |
-| `Reactions` | `IReadOnlyList<MessageReactionItem>` | リアクション |
-| `Replies` | `IReadOnlyList<MessageDisplayItem>` | スレッド返信（再帰） |
-
-**内包しているロジック**
-
-- Slack テキストのリンク解析 (`SlackLinkRegex`)
-- 絵文字の一括検出 (`SlackEmojiRegex` + `Regex.Matches()` による2パス最適化)
-- 装飾トグル解析（太字/斜体/取消線/コード）
-- 画像 URL 抽出 (`Files`, `Attachments`, `Blocks` 対応、PropertyInfo キャッシュ付き)
-- リアクション抽出（PropertyInfo キャッシュ付き）
-
-**パフォーマンス最適化**
-
-- `PropertyCache`: `ConcurrentDictionary<(Type, string), PropertyInfo?>` でリフレクション結果をキャッシュ
-- `ParseSegments()`: `Regex.Matches()` で絵文字位置を一括検出後、Dictionary ルックアップでO(n)処理
-
----
+| フィールド | 内容 |
+|-----------|------|
+| `user` | 投稿者のユーザー ID |
+| `ts` | メッセージの `ts` |
+| `text` | 元の本文 |
+| `userAvatarUri` | 投稿者のアバター URL |
+| `permalinkUri` | メッセージの URL |
+| `segments` | 本文を分割した `MessageInlineSegment` |
+| `images` | `MessageImageItem` の一覧 |
+| `reactions` | `MessageReactionItem` の一覧 |
+| `replies` | スレッド返信 (`MessageDisplayItem`、返信自身の `replies` は空) |
 
 ### `MessageInlineSegment`
 
-メッセージ本文のインライン要素 1 個分を表す値オブジェクト。
-
-| プロパティ | 型 | 概要 |
-|---|---|---|
-| `Type` | `MessageInlineSegmentType` | テキスト / リンク / 絵文字 |
-| `Text` | `string` | 表示テキスト |
-| `Uri` | `Uri?` | リンク先 (Type=Link の場合) |
-| `IsBold` | `bool` | 太字 |
-| `IsItalic` | `bool` | 斜体 |
-| `IsStrikethrough` | `bool` | 取り消し線 |
-| `IsCode` | `bool` | インラインコード |
-
----
+| フィールド | 内容 |
+|-----------|------|
+| `segType` | `text` / `link` / `emoji` |
+| `text` | 表示する文字 (絵文字のときは絵文字名) |
+| `uri` | リンク先 (`link` のとき) |
+| `isBold` / `isItalic` / `isStrikethrough` / `isCode` | スタイル (`text` のとき) |
 
 ### `MessageImageItem`
 
-メッセージ内画像の候補 URL 群を保持する値オブジェクト。
-Slack の `Files` / `Attachments` / `Blocks` 由来の複数候補から最適なものを選ぶために使う。
-
-| プロパティ | 型 | 概要 |
-|---|---|---|
-| `CandidateUrls` | `IReadOnlyList<string>` | 画像候補 URL 一覧 |
-
----
+`candidateUrls` に、同じ画像の URL を優先度順に持ちます (空と重複は除きます)。
+フロントエンドは `fetch_image` に渡し、取得できた最初の URL を表示します。
 
 ### `MessageReactionItem`
 
-リアクション 1 個分の表示データ。
+`name` と `count` を持ちます。
+カスタム絵文字は `emojiStore` の URL で描画します。
 
-| プロパティ | 型 | 概要 |
-|---|---|---|
-| `Name` | `string` | 絵文字名 |
-| `Count` | `int` | リアクション数 |
+### `CustomBoardDefinition` / `CustomBoardState`
 
----
+```json
+{
+  "activeFilter": "CustomOnly",
+  "activeCustomBoardIndex": 0,
+  "customBoards": [
+    { "name": "雑談", "channelIds": ["C0123", "C0456"] }
+  ]
+}
+```
 
-### `BatchObservableCollection<T>`
+旧 WinUI 版はチャンネルを名前で記録していましたが、Tauri 版はチャンネル ID で記録します。
+チャンネル名が変わっても、ボードから外れません。
+旧版の `custom-board.json` は読み込みません (名前から ID への変換をしていないため)。
 
-バッチ更新をサポートする `ObservableCollection<T>` の拡張。
-`BeginBatchUpdate()` ～ `EndBatchUpdate()` の間は `CollectionChanged` 通知を抑制し、
-`EndBatchUpdate()` で `Reset` を1回だけ発火する。
+## Rust 内部の型
 
-| メソッド | 概要 |
-|---------|------|
-| `BeginBatchUpdate()` | 通知抑制を開始 |
-| `EndBatchUpdate()` | 通知抑制を解除し `CollectionChanged(Reset)` を1回発火 |
-
-**効果**: 100件の個別 `Insert()` → 100回の UI通知 が 1回の `Reset` 通知に削減される。
-
----
-
-### `DownloadedImageResult` (内部クラス)
-
-`MainWindow.xaml.cs` 内に定義されている画像ダウンロード結果のヘルパークラス。
-
-| プロパティ | 型 | 概要 |
-|---|---|---|
-| `Bytes` | `byte[]` | 画像バイト列 |
-| `ContentType` | `string?` | MIME タイプ |
-| `FinalUri` | `string?` | リダイレクト後の最終 URL |
-
----
+Slack の応答を受ける型は `slack/dto.rs` にあります (`SlackConversation`、`SlackMessage`、`SlackUser`)。
+未知のフィールドや欠けたフィールドで読み込みが失敗しないよう、緩い定義にしています。
+これらは画面には渡さず、`models.rs` で表示用モデルに変換します。
 
 ## 依存関係
 
 ```
-MainWindow.xaml.cs
-├── BatchObservableCollection<ChannelWithMessages>
-│   └── ChannelWithMessages
-│       ├── SlackNet.Conversation          ← 外部ライブラリ
-│       └── MessageDisplayItem
-│           ├── SlackNet.Events.MessageEvent ← 外部ライブラリ
-│           ├── MessageInlineSegment
-│           │   └── MessageInlineSegmentType
-│           ├── MessageImageItem
-│           └── MessageReactionItem
-├── DownloadedImageResult              ← 内部クラス (MainWindow に混在)
-└── MessageRenderContext               ← Services 層 (描画コンテキスト)
-    └── BitmapImageCache               ← Services 層 (画像キャッシュ)
-```
-
----
-
-## 現在の問題点
-
-### 1. `MessageDisplayItem` に責務が集まりすぎ
-
-現状やっていること:
-
-- Slack テキストの解析
-- リンク・絵文字の変換
-- 画像 URL の抽出 (Files / Attachments / Blocks)
-- リアクション抽出
-- Permalink URI の生成
-
-これは **表示モデル + 変換サービス** が混在している状態。
-
----
-
-### 2. ~~`MessageDisplayItem.cs` に複数クラスが同居~~ ✅ 解決済み
-
-各クラスを独立ファイルに分割済み。
-
----
-
-### 3. `ChannelWithMessages` が `SlackNet.Conversation` を直接保持
-
-UI 表示モデルが外部ライブラリの型に直接依存している。
-将来 Slack API ライブラリを変更した場合に影響範囲が広い。
-
----
-
-### 4. `DownloadedImageResult` が `MainWindow.xaml.cs` に混在
-
-本来は `Services` 層に属すべきヘルパークラスが View コードに置かれている。
-
----
-
-## 整理案
-
-### 案A: ファイル分割のみ ✅ 完了
-
-クラスの中身は変えず、1 ファイル 1 クラスに分割した。
-
-**対象**
-
-| ファイル | クラス |
-|---|---|
-| `Models/MessageInlineSegmentType.cs` | `MessageInlineSegmentType` |
-| `Models/MessageInlineSegment.cs` | `MessageInlineSegment` |
-| `Models/MessageImageItem.cs` | `MessageImageItem` |
-| `Models/MessageReactionItem.cs` | `MessageReactionItem` |
-| `Models/BatchObservableCollection.cs` | `BatchObservableCollection<T>` |
-
-> `Services/DownloadedImageResult.cs` への移動は未対応 (問題点4)
-
----
-
-### 案B: 変換ロジックをサービスへ分離 (推奨)
-
-案A に加え、`MessageDisplayItem` 内の変換処理を専用サービスに移す。
-
-**新規クラス**
-
-| クラス | 場所 | 責務 |
-|---|---|---|
-| `SlackMessageParser` | `Services/` | テキスト解析・セグメント変換 |
-| `SlackMessageAssetExtractor` | `Services/` | 画像・リアクション抽出 |
-| `MessageDisplayItemFactory` | `Services/` | `MessageEvent → MessageDisplayItem` の組み立て |
-
-**効果**: `MessageDisplayItem` が純粋な表示データになる / 単体テストが書きやすくなる
-
----
-
-### 案C: `SlackNet` 依存を隠蔽 (将来対応)
-
-`ChannelWithMessages` が `SlackNet.Conversation` を直接保持しないよう、
-チャンネル情報を表す独自モデルを導入する。
-
-**新規クラス**
-
-| クラス | 場所 | 概要 |
-|---|---|---|
-| `ChannelInfo` | `Models/` | `Conversation` の必要プロパティのみ保持 |
-
-**効果**: 外部ライブラリ変更時の影響を `Services` 層に閉じ込められる
-
----
-
-## 推奨実施順
-
-```
-Step 1: 案A  → ファイル分割のみ              ✅ 完了
-Step 2: 案B  → 変換ロジックをサービスへ移動  🔲 未対応
-Step 3: 案C  → 必要なら SlackNet 依存の隠蔽  🔲 未対応
+commands/channels.rs
+   ├─ slack/endpoints.rs ──► slack/dto.rs
+   └─ slack/models.rs ──► slack/parser.rs
+                       ├─ slack/extract.rs
+                       └─ slack/emoji.rs
 ```

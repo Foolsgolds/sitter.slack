@@ -623,3 +623,19 @@ body {
   width: auto;
   margin-right: auto;
 }
+
+/* Log viewer */
+.log-view {
+  margin: 0;
+  height: 260px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre;
+  user-select: text;
+}

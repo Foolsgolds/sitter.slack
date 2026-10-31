@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { authenticate, getUserProfile } from "../api/commands";
+import { authenticate, getUserProfile, writeLog } from "../api/commands";
 import { performLogout, startWorkspaceRefresh } from "../actions/session";
 import { useAuthStore } from "../store/authStore";
 import { useUiStore } from "../store/uiStore";
@@ -108,7 +108,13 @@ export function UserPopup() {
         <p className="popup-hint">
           {autoRefreshEnabled ? "5分ごとに自動で再取得しています。" : "自動更新は停止中です。"}
         </p>
-        <button type="button" onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}>
+        <button
+          type="button"
+          onClick={() => {
+            setAutoRefreshEnabled(!autoRefreshEnabled);
+            void writeLog("info", autoRefreshEnabled ? "auto refresh stopped" : "auto refresh resumed");
+          }}
+        >
           {autoRefreshEnabled ? "自動更新を停止" : "自動更新を再開"}
         </button>
       </div>
