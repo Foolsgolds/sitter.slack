@@ -1,8 +1,6 @@
 mod commands;
-mod error;
 mod logging;
 mod persistence;
-mod slack;
 mod state;
 
 use tauri::Manager;

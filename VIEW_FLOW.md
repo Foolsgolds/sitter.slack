@@ -7,7 +7,7 @@ Slack からデータを取得し、ボード (チャンネルの横並び) に�
 ```
 Slack Web API
    ▲  (reqwest)
-Rust: commands/ ── slack/ (client, endpoints, parser, extract, models)
+Rust: commands/ ── slack/ (client, endpoints, parser, extract, models: crates/core)
    │   Tauri コマンド (invoke)            ▲
    │   Tauri イベント (emit)              │
    ▼                                      │
@@ -139,8 +139,8 @@ App
 |----------|------|
 | `src-tauri/src/commands/channels.rs` | 全体更新、チャンネル読み込み、ユーザー情報、絵文字 |
 | `src-tauri/src/commands/boards.rs` | カスタムボードの読み書き |
-| `src-tauri/src/slack/models.rs` | 表示用モデルと変換 |
-| `src-tauri/src/slack/parser.rs` | 本文の解析 |
+| `crates/core/src/slack/models.rs` | 表示用モデルと変換 |
+| `crates/core/src/slack/parser.rs` | 本文の解析 |
 | `src/App.tsx` | 起動、イベント購読、自動更新、表示チャンネルの選択 |
 | `src/actions/session.ts` | 全体更新、表示中ボードの更新、ログアウト |
 | `src/actions/boards.ts` | カスタムボードの追加・変更・削除・選択 |

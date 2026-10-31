@@ -30,9 +30,12 @@ Slack との通信はすべて Rust 側で行います。
 
 ## プロジェクト構成
 
-- `src-tauri/` — Rust (バックエンド)
-  - `src/commands/` — フロントエンドから呼ばれる Tauri コマンド
+- `Cargo.toml` — Cargo ワークスペース (`crates/core` と `src-tauri`)
+- `crates/core/` — `slacksitter-core` クレート (Tauri に依存しない)
   - `src/slack/` — Slack API クライアント、リトライ、メッセージ解析、表示用モデル
+  - `src/error.rs` — 共通のエラー型 `AppError`
+- `src-tauri/` — Tauri シェル (Rust)
+  - `src/commands/` — フロントエンドから呼ばれる Tauri コマンド
   - `src/persistence/` — トークン (資格情報ストア)、カスタムボード (JSON)
   - `src/logging.rs` — ファイルログ
 - `src/` — React (フロントエンド)
@@ -75,9 +78,10 @@ npm run tauri dev
 ### 4. テスト
 
 ```powershell
-cd src-tauri
 cargo test
 ```
+
+リポジトリ直下で実行すると、ワークスペース全体 (`crates/core` と `src-tauri`) のテストが走ります。
 
 フロントエンドの型チェックは次のコマンドです。
 

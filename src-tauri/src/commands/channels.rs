@@ -4,10 +4,10 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 
-use crate::error::{AppError, AppResult};
-use crate::slack::client::SlackClient;
-use crate::slack::dto::SlackConversation;
-use crate::slack::models::{
+use slacksitter_core::error::{AppError, AppResult};
+use slacksitter_core::slack::client::SlackClient;
+use slacksitter_core::slack::dto::SlackConversation;
+use slacksitter_core::slack::models::{
     build_channel_uri, build_message_display_item, ChannelSummary, ChannelWithMessages,
     SlackUserProfileInfo,
 };
@@ -70,7 +70,7 @@ async fn refresh_workspace_data_inner(
     };
     let (emoji_result, _current_user) = tokio::join!(emoji_future, avatar_future);
     if let Ok(raw_emoji) = emoji_result {
-        *state.emoji_map.write().unwrap() = crate::slack::emoji::flatten_emoji_map(&raw_emoji);
+        *state.emoji_map.write().unwrap() = slacksitter_core::slack::emoji::flatten_emoji_map(&raw_emoji);
     }
 
     let mut all_channels = Vec::new();
