@@ -170,7 +170,8 @@ body {
   flex: 1;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 20px;
+  /* Leave room for the floating controller bar. */
+  padding: 20px 20px 96px;
 }
 .channel-board__slot {
   padding-right: 16px;
@@ -220,6 +221,12 @@ body {
   overflow: hidden;
   flex-shrink: 0;
   background: var(--border);
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.message-avatar:disabled {
+  cursor: default;
 }
 .message-avatar img {
   width: 100%;
@@ -348,22 +355,110 @@ body {
   cursor: pointer;
 }
 
-/* Top bar (stand-in for the bottom controller bar until M4) */
-.top-bar {
+/* Controller bar (bottom center, see CONTROLER.md) */
+.controller {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 20px;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
+  gap: 14px;
+  z-index: 10;
 }
-.top-bar__filters,
-.top-bar__actions {
+.circle-button,
+.square-button {
+  width: 48px;
+  height: 48px;
+  padding: 0;
   display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 2px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 22px;
+  cursor: pointer;
+}
+.circle-button {
+  border-radius: 50%;
+}
+.square-button {
+  border-radius: 8px;
+}
+.circle-button img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.square-button--selected {
+  border-color: var(--error);
+  color: var(--error);
+}
+.square-button:disabled {
+  cursor: default;
+}
+
+/* Speech-bubble popup (positioned by @floating-ui) */
+.bubble {
+  z-index: 30;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+.bubble__body {
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+}
+
+/* Forms inside popups */
+.popup-form {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
-.filter-button,
-.top-bar__actions button {
+.popup-form label {
+  font-weight: bold;
+  font-size: 13px;
+}
+.popup-form input,
+.popup-form textarea {
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.popup-form textarea {
+  resize: vertical;
+}
+.popup-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.popup-status {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.popup-status--error {
+  color: var(--error);
+}
+.popup-status--ok {
+  color: #2e7d32;
+}
+.popup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.bubble button,
+.dialog button {
   padding: 6px 14px;
   border-radius: 6px;
   border: 1px solid var(--border);
@@ -371,8 +466,119 @@ body {
   color: var(--text);
   cursor: pointer;
 }
-.filter-button--active {
+.bubble button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
+}
+.bubble button.danger {
   border-color: var(--error);
   color: var(--error);
-  font-weight: bold;
+  width: 100%;
+}
+.bubble button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.bubble hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+
+/* User popup */
+.user-popup__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.user-popup__avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--border);
+  flex-shrink: 0;
+}
+.user-popup__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.user-popup__name {
+  font-weight: 600;
+}
+.user-popup__id {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Dialog (user profile) */
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 25;
+}
+.dialog {
+  width: 360px;
+  max-width: 90vw;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* Profile text should be copyable. */
+  user-select: text;
+}
+.profile-dialog__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.profile-dialog__avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--border);
+  flex-shrink: 0;
+}
+.profile-dialog__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.profile-dialog__name {
+  font-size: 16px;
+  font-weight: 600;
+}
+.profile-dialog__id {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.profile-dialog__rows {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.profile-dialog__row {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+}
+.profile-dialog__row dt {
+  width: 80px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.profile-dialog__row dd {
+  margin: 0;
+  word-break: break-word;
 }

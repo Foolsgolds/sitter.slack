@@ -1,4 +1,5 @@
 import type { MessageDisplayItem } from "../types/models";
+import { useUiStore } from "../store/uiStore";
 import { MessageBody } from "./MessageBody";
 import { MessageImages } from "./MessageImages";
 import { ReactionBar } from "./ReactionBar";
@@ -19,12 +20,24 @@ interface Props {
 }
 
 export function MessageItemView({ channelId, message, depth = 0 }: Props) {
+  const setProfileTarget = useUiStore((s) => s.setProfileTarget);
+
   return (
     <div className="message-item" style={depth > 0 ? { marginLeft: 28 } : undefined}>
       <div className="message-item__row">
-        <div className="message-avatar">
+        <button
+          className="message-avatar"
+          type="button"
+          disabled={!message.user}
+          title="ユーザー情報"
+          onClick={() => {
+            if (message.user) {
+              setProfileTarget({ userId: message.user, avatarUri: message.userAvatarUri });
+            }
+          }}
+        >
           {message.userAvatarUri && <img src={message.userAvatarUri} alt="" />}
-        </div>
+        </button>
         <div className="message-card">
           <a className="message-timestamp" href={message.permalinkUri} target="_blank" rel="noreferrer">
             {formatTimestamp(message.ts)}

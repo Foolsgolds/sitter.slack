@@ -1,6 +1,7 @@
-import { useEffect, useRef } from "react";
-import { getEmojiMap, refreshWorkspaceData, tryAutoLogin } from "./api/commands";
+import { useEffect } from "react";
+import { getEmojiMap, tryAutoLogin } from "./api/commands";
 import { onChannelBatch, onRefreshComplete, onRefreshError } from "./api/events";
+import { startWorkspaceRefresh } from "./actions/session";
 import { useAuthStore } from "./store/authStore";
 import { sortChannels, useChannelsStore } from "./store/channelsStore";
 import { useUiStore } from "./store/uiStore";
@@ -9,8 +10,9 @@ import { AuthenticationView } from "./components/AuthenticationView";
 import { StartupSplash } from "./components/StartupSplash";
 import { StatusPanelView } from "./components/StatusPanelView";
 import { ChannelBoardView } from "./components/ChannelBoardView";
-import { TopBar } from "./components/TopBar";
+import { MainControllerView } from "./components/MainControllerView";
 import { ImagePreviewOverlay } from "./components/ImagePreviewOverlay";
+import { UserProfileDialog } from "./components/UserProfileDialog";
 import "./styles/app.css";
 
 const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
@@ -27,16 +29,10 @@ function App() {
 
   const activeFilter = useUiStore((s) => s.activeFilter);
   const autoRefreshEnabled = useUiStore((s) => s.autoRefreshEnabled);
-  const isRefreshing = useUiStore((s) => s.isRefreshing);
   const setRefreshing = useUiStore((s) => s.setRefreshing);
   const setStatus = useUiStore((s) => s.setStatus);
 
   const setEmojiMap = useEmojiStore((s) => s.setEmojiMap);
-
-  const isRefreshingRef = useRef(isRefreshing);
-  useEffect(() => {
-    isRefreshingRef.current = isRefreshing;
-  }, [isRefreshing]);
 
   // Startup: try the saved token before showing the login screen.
   useEffect(() => {
@@ -81,22 +77,15 @@ function App() {
   useEffect(() => {
     if (status !== "authenticated") return;
     clearChannels();
-    setRefreshing(true);
-    setStatus("チャンネルを読み込んでいます...", "loading");
-    refreshWorkspaceData().catch((err) => setStatus(String(err), "error"));
+    startWorkspaceRefresh({ showLoading: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
-  // 5-minute auto-refresh, skipped while a refresh is already in flight.
+  // 5-minute auto-refresh; startWorkspaceRefresh skips while one is in flight.
   useEffect(() => {
     if (status !== "authenticated" || !autoRefreshEnabled) return;
-    const id = window.setInterval(() => {
-      if (isRefreshingRef.current) return;
-      setRefreshing(true);
-      refreshWorkspaceData().catch((err) => setStatus(String(err), "error"));
-    }, AUTO_REFRESH_INTERVAL_MS);
+    const id = window.setInterval(() => startWorkspaceRefresh(), AUTO_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, autoRefreshEnabled]);
 
   if (status === "checking") return <StartupSplash />;
@@ -115,8 +104,9 @@ function App() {
     <div className="app-shell">
       <StatusPanelView />
       <ChannelBoardView channels={visibleChannels} />
-      <TopBar />
+      <MainControllerView />
       <ImagePreviewOverlay />
+      <UserProfileDialog />
     </div>
   );
 }
