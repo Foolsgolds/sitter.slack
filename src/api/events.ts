@@ -5,11 +5,14 @@
 import { isUnauthorized, openEventStream } from "./client";
 import { SseParser } from "./sse";
 
+/** Who started a sync batch: the server's own rounds, or a request from a client. */
+export type SyncKind = "scheduler" | "manual";
+
 export type ServerEvent =
-  | { type: "sync-started"; total: number }
-  | { type: "sync-progress"; done: number; total: number }
+  | { type: "sync-started"; batchId: string; kind: SyncKind; total: number }
+  | { type: "sync-progress"; batchId: string; kind: SyncKind; done: number; total: number }
   | { type: "channel-updated"; channelId: string }
-  | { type: "sync-completed"; failed: number }
+  | { type: "sync-completed"; batchId: string; kind: SyncKind; failed: number }
   | { type: "sync-error"; message: string };
 
 export interface EventHandlers {
@@ -38,15 +41,17 @@ export function toServerEvent(name: string, data: string): ServerEvent | null {
   } catch {
     return null;
   }
+  const batchId = String(payload.batchId ?? "");
+  const kind: SyncKind = payload.kind === "manual" ? "manual" : "scheduler";
   switch (name) {
     case "sync-started":
-      return { type: name, total: Number(payload.total ?? 0) };
+      return { type: name, batchId, kind, total: Number(payload.total ?? 0) };
     case "sync-progress":
-      return { type: name, done: Number(payload.done ?? 0), total: Number(payload.total ?? 0) };
+      return { type: name, batchId, kind, done: Number(payload.done ?? 0), total: Number(payload.total ?? 0) };
     case "channel-updated":
       return typeof payload.channelId === "string" ? { type: name, channelId: payload.channelId } : null;
     case "sync-completed":
-      return { type: name, failed: Number(payload.failed ?? 0) };
+      return { type: name, batchId, kind, failed: Number(payload.failed ?? 0) };
     case "sync-error":
       return { type: name, message: String(payload.message ?? "") };
     default:

@@ -11,8 +11,9 @@ import {
   isUnauthorized,
   listAllChannels,
   loadChannels,
+  MAX_SYNC_CHANNELS,
   setConnection,
-  syncChannel,
+  syncChannels,
   getChannel,
 } from "../api/client";
 import { clearServerSettings, writeLog } from "../api/commands";
@@ -112,21 +113,31 @@ function handleUnauthorized() {
 // -------------------------------------------------------- the refresh button
 
 let refreshTimer: number | undefined;
-/** Channel syncs requested by the refresh button that have not reported `sync-completed` yet. */
-let pendingSyncCompletions = 0;
+/** Batches the refresh button asked for that have not reported `sync-completed` yet. */
+const pendingBatches = new Set<string>();
+/** Batches that finished (the event can arrive before the request's own response does). */
+const completedBatches: string[] = [];
+const COMPLETED_BATCHES_KEPT = 50;
 
 function finishRefresh() {
   window.clearTimeout(refreshTimer);
   refreshTimer = undefined;
-  pendingSyncCompletions = 0;
+  pendingBatches.clear();
   useUiStore.getState().setRefreshing(false);
+}
+
+/** Called when a batch we asked for (or any batch) completed. */
+function batchCompleted(batchId: string) {
+  completedBatches.push(batchId);
+  if (completedBatches.length > COMPLETED_BATCHES_KEPT) completedBatches.shift();
+  if (pendingBatches.delete(batchId) && pendingBatches.size === 0) finishRefresh();
 }
 
 /**
  * The refresh button: asks the server to sync the channels on the board being
- * shown right now (instead of waiting for its next round). Each request ends
- * with a `sync-completed` event (or a timeout), which stops the spinner; the new
- * content arrives through `channel-updated`.
+ * shown right now (instead of waiting for its next round), as one batch. The
+ * spinner stops on the `sync-completed` event with that batch's id (or after a
+ * timeout); the new content arrives through `channel-updated`.
  * With nothing on screen yet, it falls back to loading from the server.
  */
 export async function refreshActiveBoard() {
@@ -147,10 +158,14 @@ export async function refreshActiveBoard() {
   }
 
   ui.setRefreshing(true);
-  pendingSyncCompletions = visible.length;
   refreshTimer = window.setTimeout(finishRefresh, REFRESH_TIMEOUT_MS);
   try {
-    await Promise.all(visible.map((channel) => syncChannel(channel.channelId)));
+    const ids = visible.map((channel) => channel.channelId);
+    for (let start = 0; start < ids.length; start += MAX_SYNC_CHANNELS) {
+      const batchId = await syncChannels(ids.slice(start, start + MAX_SYNC_CHANNELS));
+      if (!completedBatches.includes(batchId)) pendingBatches.add(batchId);
+    }
+    if (pendingBatches.size === 0) finishRefresh();
   } catch (err) {
     finishRefresh();
     handleRequestError(err, "sync request failed");
@@ -183,7 +198,7 @@ function handleServerEvent(event: ServerEvent) {
       queueChannelReload(event.channelId);
       break;
     case "sync-completed":
-      if (pendingSyncCompletions > 0 && --pendingSyncCompletions === 0) finishRefresh();
+      batchCompleted(event.batchId);
       if (event.failed === 0 && syncErrorShown) {
         syncErrorShown = false;
         clearStatusIf("error");

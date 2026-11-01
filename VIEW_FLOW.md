@@ -28,7 +28,7 @@ React: api/client.ts ── actions/ ── store/ (zustand) ── components/
 | 接続画面で「接続」 | `GET /api/health` と `GET /api/me` で確かめ、成功したら設定を保存して全体の読み込みへ |
 | 全体の読み込み (`loadWorkspace`) | カタログと絵文字を読み、`times*` (サーバーの `channel_prefix`) とカスタムボードのチャンネルを `POST /api/channels/batch` で読む。あわせて `PUT /api/sync/targets` でカスタムボードのチャンネルを伝える |
 | サーバーの SSE `channel-updated` | そのチャンネルだけを `GET /api/channels/{id}` で読み直す (200ms 内に重なったものはまとめて読む) |
-| 更新ボタン (↻) | 表示中のボードの各チャンネルに `POST /api/sync/channels/{id}` を送る。`sync-completed` を依頼の数だけ受けるか、60 秒たつと、更新中の表示を戻す |
+| 更新ボタン (↻) | 表示中のボードのチャンネルをまとめて `POST /api/sync/channels` で依頼する (500 件ごとに分ける)。応答の `batchId` と同じ `batchId` の `sync-completed` を受けるか、60 秒たつと、更新中の表示を戻す |
 | カスタムボードの追加 / 変更 / 削除 | `PUT /api/sync/targets` で同期対象を更新し、ストアにないチャンネルだけを読む |
 | リアクションの操作 | `POST /api/reactions/toggle` のあと、対象チャンネルを `GET /api/channels/{id}` で読み直す |
 | メッセージの投稿 | `POST /api/messages`。サーバーが投稿先を同期し、`channel-updated` で反映される |
@@ -38,7 +38,7 @@ React: api/client.ts ── actions/ ── store/ (zustand) ── components/
 Slack を見に行くのはサーバーの同期ワーカー (既定で 1 分に 1 回程度の呼び出し間隔) だけで、デスクトップアプリは読むだけです。
 
 更新ボタンは、「Slack から取り直す」のではなく、「サーバーに今すぐ同期を頼む」ボタンです。
-サーバーは頼まれたチャンネルを 1 つずつ同期し、新しい内容が DB に入ると `channel-updated` を流します。
+サーバーは頼まれたチャンネルを 1 つのバッチとして順に同期し、新しい内容が DB に入ると `channel-updated` を流します。
 同期は Slack の呼び出し回数制限を受けるため、数十秒から数分かかることがあります (サーバーは先に DB の内容を返せます)。
 
 ## 3. 読み込みのフロー

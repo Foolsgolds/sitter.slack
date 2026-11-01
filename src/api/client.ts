@@ -123,7 +123,7 @@ export const getChannel = (channelId: string) =>
 /** Re-reads one channel from the server's database (it does not call Slack). */
 export const refreshChannel = getChannel;
 
-const BATCH_SIZE = 50;
+const BATCH_SIZE = 50; // channels per /api/channels/batch request (the server takes up to 500)
 
 /**
  * Reads several channels (unknown ids are skipped). Requests go out in
@@ -159,12 +159,21 @@ export const toggleReaction = (channelId: string, ts: string, name: string) =>
 
 // -------------------------------------------------------------------- sync
 
-/** Asks the server to sync one channel now. Completion arrives as `sync-completed`. */
-export const syncChannel = (channelId: string) =>
-  post<{ started: boolean }>(`/api/sync/channels/${encodeURIComponent(channelId)}`).then(() => undefined);
+/** The most channels the server takes in one `POST /api/sync/channels`. */
+export const MAX_SYNC_CHANNELS = 500;
 
-/** Asks the server to sync every target now. Rejects with status 409 while a pass is running. */
-export const syncAll = () => post<{ started: boolean }>("/api/sync").then(() => undefined);
+/**
+ * Asks the server to sync these channels now, as one batch. Returns the batch
+ * id: the batch's `sync-completed` event carries the same one.
+ */
+export const syncChannels = (channelIds: string[]) =>
+  post<{ started: boolean; batchId: string }>("/api/sync/channels", { channelIds }).then((body) => body.batchId);
+
+/**
+ * Asks the server to sync every target now (spaced like its own rounds); returns the
+ * batch id. Rejects with status 409 while a pass is already running.
+ */
+export const syncAll = () => post<{ started: boolean; batchId: string }>("/api/sync").then((body) => body.batchId);
 
 export const getSyncStatus = () => json<SyncStatus>("/api/sync/status");
 
