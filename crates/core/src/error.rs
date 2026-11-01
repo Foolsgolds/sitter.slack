@@ -12,8 +12,6 @@ pub enum AppError {
     Network(#[from] reqwest::Error),
     #[error("persistence error: {0}")]
     Persistence(String),
-    #[error("credential store error: {0}")]
-    Credential(String),
     #[error("database error: {0}")]
     Database(String),
 }

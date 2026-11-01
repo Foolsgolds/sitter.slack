@@ -1,10 +1,14 @@
-import { useState, type FormEvent } from "react";
-import { authenticate } from "../api/commands";
+import { useEffect, useState, type FormEvent } from "react";
+import { normalizeBaseUrl, setConnection, testConnection } from "../api/client";
+import { loadServerSettings, saveServerSettings, writeLog } from "../api/commands";
 import { useAuthStore } from "../store/authStore";
-import { REQUIRED_OAUTH_SCOPES } from "../constants";
 
+const DEFAULT_SERVER_URL = "http://127.0.0.1:8787";
+
+/** The connection screen: where the SlackSitter server is, and the API key for it. */
 export function AuthenticationView() {
-  const [token, setToken] = useState("");
+  const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL);
+  const [apiKey, setApiKey] = useState("");
   const status = useAuthStore((s) => s.status);
   const errorMessage = useAuthStore((s) => s.errorMessage);
   const setAuthenticating = useAuthStore((s) => s.setAuthenticating);
@@ -13,16 +17,42 @@ export function AuthenticationView() {
 
   const busy = status === "authenticating";
 
+  // Start from the saved connection, so a server that was down at startup
+  // can simply be retried.
+  useEffect(() => {
+    let cancelled = false;
+    loadServerSettings()
+      .then((saved) => {
+        if (cancelled || !saved) return;
+        setServerUrl(saved.serverUrl);
+        setApiKey(saved.apiKey);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!token.trim()) {
-      setLoggedOut("User OAuth Token を入力してください");
+    const url = normalizeBaseUrl(serverUrl);
+    if (!/^https?:\/\/.+/i.test(url)) {
+      setLoggedOut("サーバー URL は http:// か https:// で始めてください");
       return;
     }
+    if (!apiKey.trim()) {
+      setLoggedOut("API キーを入力してください");
+      return;
+    }
+
     setAuthenticating();
     try {
-      const result = await authenticate(token.trim());
-      setAuthenticated(result);
+      // Reachability (/api/health) and the key (/api/me) are checked before anything is saved.
+      const me = await testConnection({ baseUrl: url, apiKey });
+      await saveServerSettings(url, apiKey.trim());
+      setConnection({ baseUrl: url, apiKey });
+      void writeLog("info", "connected to the server");
+      setAuthenticated(me, url);
     } catch (err) {
       setLoggedOut(String(err));
     }
@@ -31,24 +61,35 @@ export function AuthenticationView() {
   return (
     <div className="auth-view">
       <div className="auth-card">
-        <h1>Slack 認証</h1>
+        <h1>サーバー接続</h1>
         <div className="auth-instructions">
-          <p>1. Slack の「Your Apps」からアプリを作成し、User Token Scopes に以下を追加してください。</p>
-          <code className="scope-list">{REQUIRED_OAUTH_SCOPES.join(", ")}</code>
-          <p>2. ワークスペースにインストールし、発行された User OAuth Token (xoxp-...) を下に貼り付けてください。</p>
+          <p>
+            SlackSitter サーバー (slacksitter-server) を先に起動し、その URL と API キーを入力してください。
+            Slack のトークンはサーバー側の設定に書きます。このアプリには入力しません。
+          </p>
+          <p>設定のしかたは SERVER.md を参照してください。</p>
         </div>
         <form onSubmit={handleSubmit} className="auth-form">
-          <label htmlFor="token-input">User OAuth Token</label>
+          <label htmlFor="server-url-input">サーバー URL</label>
           <input
-            id="token-input"
+            id="server-url-input"
+            type="text"
+            placeholder={DEFAULT_SERVER_URL}
+            value={serverUrl}
+            onChange={(event) => setServerUrl(event.target.value)}
+            disabled={busy}
+          />
+          <label htmlFor="api-key-input">API キー</label>
+          <input
+            id="api-key-input"
             type="password"
-            placeholder="xoxp-..."
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
+            placeholder="slacksitter.toml の server.api_key"
+            value={apiKey}
+            onChange={(event) => setApiKey(event.target.value)}
             disabled={busy}
           />
           <button type="submit" disabled={busy}>
-            {busy ? "認証中..." : "認証"}
+            {busy ? "接続中..." : "接続"}
           </button>
         </form>
         {errorMessage && <p className="auth-status auth-status--error">{errorMessage}</p>}

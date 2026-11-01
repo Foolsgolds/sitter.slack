@@ -1,3 +1,4 @@
+// Scopes the server's Slack token needs (shown when the server reports `missing_scope`).
 export const REQUIRED_OAUTH_SCOPES = [
   "channels:read",
   "channels:history",
@@ -11,13 +12,6 @@ export const REQUIRED_OAUTH_SCOPES = [
   "chat:write",
   "emoji:read",
 ];
-
-/**
- * Only channels whose name starts with this (case-sensitive) prefix appear on
- * the ALL / joined / not-joined boards. Must match CHANNEL_NAME_PREFIX in
- * src-tauri/src/commands/channels.rs. Custom boards may hold any channel.
- */
-export const CHANNEL_NAME_PREFIX = "times";
 
 export const MAX_CUSTOM_BOARDS = 10;
 export const DEFAULT_BOARD_NAME = "カスタムボード";

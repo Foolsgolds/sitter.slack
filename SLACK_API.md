@@ -1,8 +1,8 @@
 # Slack API 利用一覧
 
 本プロジェクト（SlackSitter）で利用している Slack API の一覧です。
-API 呼び出しはすべて Rust 側 (`crates/core/src/slack/`) に集約されています。
-フロントエンドは Slack API を直接呼びません。
+API 呼び出しはすべてサーバー (`slacksitter-server`、[SERVER.md](SERVER.md)) が行い、実装は `crates/core/src/slack/` に集約されています。
+デスクトップアプリ (Tauri + React) は Slack API を直接呼びません。サーバーの Web API だけを呼びます。
 
 ## 構成
 
@@ -12,7 +12,8 @@ API 呼び出しはすべて Rust 側 (`crates/core/src/slack/`) に集約され
 | `crates/core/src/slack/endpoints.rs` | 各 API のラッパー (`SlackClient` のメソッド) |
 | `crates/core/src/slack/dto.rs` | Slack の応答 JSON を受ける型 |
 
-呼び出しの入口になる Tauri コマンドは `src-tauri/src/commands/` にあります。
+呼び出しの入口は、サーバーの起動処理 (`crates/server/src/lib.rs`)、同期ワーカー (`crates/core/src/sync/`)、Web API のハンドラー (`crates/server/src/routes.rs`) です。
+以前は `src-tauri/src/commands/` の Tauri コマンドが直接呼んでいましたが、サーバーへ移しました。
 
 ## API 一覧
 
@@ -21,7 +22,7 @@ API 呼び出しはすべて Rust 側 (`crates/core/src/slack/`) に集約され
 | 項目 | 内容 |
 |------|------|
 | 呼び出し | `SlackClient::auth_test()` |
-| 呼び出し元 | `commands/auth.rs` — `authenticate`、`try_auto_login` |
+| 呼び出し元 | サーバーの起動時に 1 回 (`GET /api/me` で結果を返す) |
 | 用途 | トークンの検証、ワークスペース URL と認証ユーザー ID の取得 |
 
 ### 2. conversations.list
@@ -29,75 +30,75 @@ API 呼び出しはすべて Rust 側 (`crates/core/src/slack/`) に集約され
 | 項目 | 内容 |
 |------|------|
 | 呼び出し | `SlackClient::list_channels_page()` |
-| 呼び出し元 | `commands/channels.rs` — `refresh_workspace_data` |
+| 呼び出し元 | 同期ワーカー (`sync_catalog`) |
 | 用途 | ワークスペース内のチャンネル一覧を取得 |
 | 主なパラメータ | `types`: `public_channel,private_channel`、`exclude_archived`: true、`limit`: 200 |
 | ページネーション | カーソルベース (`response_metadata.next_cursor`) |
-| 備考 | 全チャンネルをカタログとして保持する (チャンネル選択、投稿先の解決に使用)。ボードに読み込むのは名前が `times` で始まるチャンネルと、カスタムボードが指定したチャンネルだけ |
+| 備考 | 全チャンネルをカタログ (DB の `channels`) として保持する (チャンネル選択、投稿先の解決に使用)。同期するのは、名前が `sync.channel_prefix` (既定 `times`) で始まるチャンネルと、カスタムボードが指定したチャンネルだけ |
 
 ### 3. conversations.history
 
 | 項目 | 内容 |
 |------|------|
-| 呼び出し | `SlackClient::conversation_history()` |
-| 呼び出し元 | `commands/channels.rs` — チャンネル読み込み (`load_single_channel`) |
-| 用途 | 指定チャンネルのメッセージ履歴を取得 |
-| 主なパラメータ | `channel`、`limit`: 10、`oldest`: 差分取得用 (任意) |
-| 備考 | 取得後、タイムスタンプ降順に並べる |
+| 呼び出し | `SlackClient::conversation_history_page()` (同期ワーカー用。応答を JSON のまま返す) |
+| 呼び出し元 | 同期ワーカー (`sync_channel`) |
+| 用途 | 指定チャンネルのメッセージ履歴を取得し、DB に保存する |
+| 主なパラメータ | `channel`、`limit`: `sync.history_limit` (既定 15)、`cursor`: 次のページ |
+| 備考 | 取得後、タイムスタンプ降順に並べる。`oldest` は付けない (理由は下の「差分取得の方法」) |
 
-リアクションの追加 / 取り消しの前にも、対象メッセージ 1 件を取得して自分のリアクション済みかを確認します (`oldest` と `latest` に同じ `ts`、`inclusive`: true、`limit`: 1)。
+リアクションの追加 / 取り消しの前にも、サーバーが対象メッセージ 1 件を取得して自分のリアクション済みかを確認します (`SlackClient::conversation_message_raw()`。`oldest` と `latest` に同じ `ts`、`inclusive`: true、`limit`: 1)。
 
 ### 4. conversations.replies
 
 | 項目 | 内容 |
 |------|------|
-| 呼び出し | `SlackClient::conversation_replies()` |
-| 呼び出し元 | `commands/channels.rs` — チャンネル読み込み |
-| 用途 | スレッドの返信を取得 (`reply_count` が 1 以上のメッセージだけ) |
+| 呼び出し | `SlackClient::conversation_replies_raw()` |
+| 呼び出し元 | 同期ワーカー (`sync_channel`) |
+| 用途 | スレッドの返信を取得 (`reply_count` が 1 以上で、保存値から変わった親メッセージだけ) |
 | 主なパラメータ | `channel`、`ts`: 親メッセージの `ts`、`limit`: 20 |
-| 備考 | 親メッセージは除外し、タイムスタンプ昇順に並べる。取得に失敗しても親メッセージの表示は続ける |
+| 備考 | 親メッセージは除外し、タイムスタンプ昇順に並べる。取得に失敗したときは、そのチャンネルの同期を失敗として記録し、親メッセージも書き込まない (次回やり直す) |
 
 ### 5. users.info
 
 | 項目 | 内容 |
 |------|------|
 | 呼び出し | `SlackClient::user_info()` |
-| 呼び出し元 | `commands/auth.rs` (自分のアバター)、`commands/channels.rs` (投稿者のアバター、ユーザー情報ダイアログ) |
+| 呼び出し元 | 同期ワーカー (投稿者)、サーバーの起動時 (自分のアバター)、`GET /api/users/{id}` (DB にないとき) |
 | 用途 | プロフィール (名前、アバター画像 URL) の取得 |
-| 画像の優先順位 | 72 → 48 → 32 (自分のアバターは 192 → 72) |
-| キャッシュ | チャンネル読み込み 1 バッチの中でユーザーごとに結果を保持。失敗した検索も保持して再試行を避ける |
+| 画像の優先順位 | 72 → 48 → 32 (ユーザー情報ダイアログと自分のアバターは 192 → 72 → 48) |
+| キャッシュ | DB の `users` に保存する。未保存か、取得から 24 時間以上たったユーザーだけ取り直す |
 
 ### 6. emoji.list
 
 | 項目 | 内容 |
 |------|------|
 | 呼び出し | `SlackClient::emoji_list()` |
-| 呼び出し元 | `commands/channels.rs` — `refresh_workspace_data` |
-| 用途 | カスタム絵文字の一覧。`alias:` の連鎖は読み込み時に解決して保持する |
+| 呼び出し元 | 同期ワーカー (`sync_catalog`) |
+| 用途 | カスタム絵文字の一覧。`alias:` の連鎖は取得時に解決して DB の `emoji` に保存する |
 
 ### 7. chat.postMessage
 
 | 項目 | 内容 |
 |------|------|
 | 呼び出し | `SlackClient::post_message()` |
-| 呼び出し元 | `commands/messages.rs` — `post_message` |
+| 呼び出し元 | `POST /api/messages` |
 | 用途 | メッセージの投稿 |
-| 備考 | 投稿先はチャンネル名 (大文字小文字を区別しない) からカタログで ID に解決する |
+| 備考 | 投稿先はチャンネル名 (大文字小文字を区別しない) から DB のカタログで ID に解決する。成功後、そのチャンネルをバックグラウンドで同期する |
 
 ### 8. reactions.add / reactions.remove
 
 | 項目 | 内容 |
 |------|------|
 | 呼び出し | `SlackClient::add_reaction()` / `remove_reaction()` |
-| 呼び出し元 | `commands/reactions.rs` — `toggle_reaction` |
+| 呼び出し元 | `POST /api/reactions/toggle` |
 | 用途 | リアクションの追加 / 取り消し |
-| 備考 | 先に自分のリアクション済みかを確認してから、追加か取り消しかを決める。`already_reacted` と `no_reaction` は成功として扱う |
+| 備考 | 先に自分のリアクション済みかを確認してから、追加か取り消しかを決める。`already_reacted` と `no_reaction` は成功として扱う。成功後、対象メッセージを取り直して DB を更新する |
 
 ### 画像の取得 (Slack Web API 以外)
 
 Slack 内のプライベート画像 (`files.slack.com` など) は Bearer トークンが必要です。
-`commands/image.rs` の `fetch_image` が取得して data URL を返します。
-リダイレクトは最大 5 回までで、URL に `slack` を含む場合だけトークンを付け直します。
+サーバーの `GET /api/images?url=` (`crates/server/src/images.rs`) が取得してバイト列を返し、フロントエンドは `fetch` で受けて object URL にします。
+リダイレクトは最大 5 回までで、`https://*.slack.com` へのリクエストにだけトークンを付けます (リダイレクトのたびに確認します)。
 同時に取得するのは 2 件までです。
 アバター画像は公開 URL なので、フロントエンドが `<img>` で直接読み込みます。
 
@@ -119,8 +120,8 @@ Slack 内のプライベート画像 (`files.slack.com` など) は Bearer ト�
 
 | 対象 | 上限 |
 |------|------|
-| チャンネルの読み込み | 10 |
-| インライン画像の取得 | 2 |
+| 同期ワーカーのチャンネル同期 | 1 (巡回は 1 チャンネルずつ。API で依頼した同期も 1 つずつ) |
+| 画像の取得 (`/api/images`) | 2 |
 
 ## 必要な OAuth Scopes
 

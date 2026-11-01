@@ -1383,21 +1383,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "futures"
-version = "0.3.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a88cf1f829d945f548cf8fec32c61b1f202b6d93b45848602fc02af4b12ad218"
-dependencies = [
- "futures-channel",
- "futures-core",
- "futures-executor",
- "futures-io",
- "futures-sink",
- "futures-task",
- "futures-util",
-]
-
-[[package]]
 name = "futures-channel"
 version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1498,7 +1483,6 @@ version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a77a90a256fce34da66415271e30f94ee91c57b04b8a2c042d9cf3220179deaa"
 dependencies = [
- "futures-channel",
  "futures-core",
  "futures-io",
  "futures-macro",
@@ -4227,19 +4211,13 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 name = "slacksitter"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
- "chrono",
- "futures",
  "keyring",
- "reqwest 0.12.28",
  "serde",
  "serde_json",
- "slacksitter-core",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
  "thiserror 2.0.19",
- "tokio",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",

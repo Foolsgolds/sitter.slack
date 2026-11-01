@@ -1,26 +1,26 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { authenticate, getUserProfile, writeLog } from "../api/commands";
-import { performLogout, startWorkspaceRefresh } from "../actions/session";
+import { useEffect, useState } from "react";
+import { getSyncStatus, getUserProfile, syncAll } from "../api/client";
+import { performLogout } from "../actions/session";
 import { useAuthStore } from "../store/authStore";
-import { useUiStore } from "../store/uiStore";
-import type { SlackUserProfileInfo } from "../types/models";
+import type { SlackUserProfileInfo, SyncStatus } from "../types/models";
 
-type TokenStatus = { kind: "busy" | "ok" | "error"; text: string } | null;
+type SyncNow = { kind: "busy" | "ok" | "error"; text: string } | null;
 
-/** How long the success message stays visible before the popup closes. */
-const TOKEN_UPDATED_CLOSE_DELAY_MS = 2000;
+function formatUnix(seconds: number | null): string {
+  if (seconds === null) return "まだありません";
+  const date = new Date(seconds * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getMonth() + 1}/${date.getDate()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 
 export function UserPopup() {
   const userId = useAuthStore((s) => s.userId);
   const avatarUri = useAuthStore((s) => s.avatarUri);
-  const setAuthenticated = useAuthStore((s) => s.setAuthenticated);
-  const autoRefreshEnabled = useUiStore((s) => s.autoRefreshEnabled);
-  const setAutoRefreshEnabled = useUiStore((s) => s.setAutoRefreshEnabled);
-  const setOpenPopup = useUiStore((s) => s.setOpenPopup);
+  const serverUrl = useAuthStore((s) => s.serverUrl);
 
   const [profile, setProfile] = useState<SlackUserProfileInfo | null>(null);
-  const [token, setToken] = useState("");
-  const [tokenStatus, setTokenStatus] = useState<TokenStatus>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [syncNow, setSyncNow] = useState<SyncNow>(null);
 
   useEffect(() => {
     if (!userId) return;
@@ -35,28 +35,34 @@ export function UserPopup() {
     };
   }, [userId]);
 
-  async function handleUpdateToken(event: FormEvent) {
-    event.preventDefault();
-    if (!token.trim()) {
-      setTokenStatus({ kind: "error", text: "トークンを入力してください" });
-      return;
-    }
+  useEffect(() => {
+    let cancelled = false;
+    getSyncStatus()
+      .then((status) => {
+        if (!cancelled) setSyncStatus(status);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-    setTokenStatus({ kind: "busy", text: "認証中..." });
+  async function handleSyncNow() {
+    setSyncNow({ kind: "busy", text: "同期を依頼しています..." });
     try {
-      const result = await authenticate(token.trim());
-      setAuthenticated(result);
-      setToken("");
-      setTokenStatus({ kind: "ok", text: "✅ トークンを更新しました" });
-      startWorkspaceRefresh({ showLoading: true });
-      window.setTimeout(() => setOpenPopup(null), TOKEN_UPDATED_CLOSE_DELAY_MS);
+      await syncAll();
+      setSyncNow({ kind: "ok", text: "同期を始めました。更新されたチャンネルから順に表示されます。" });
     } catch (err) {
-      setTokenStatus({ kind: "error", text: `❌ 認証に失敗しました: ${String(err)}` });
+      const running = err instanceof Error && /already running/i.test(err.message);
+      setSyncNow({
+        kind: running ? "ok" : "error",
+        text: running ? "同期はすでに実行中です。" : `同期を依頼できませんでした: ${String(err)}`,
+      });
     }
   }
 
   const displayName = profile?.displayName || profile?.realName || profile?.userName || "";
-  const busy = tokenStatus?.kind === "busy";
+  const busy = syncNow?.kind === "busy";
 
   return (
     <div className="user-popup">
@@ -72,58 +78,38 @@ export function UserPopup() {
 
       <hr />
 
-      <form className="popup-form" onSubmit={handleUpdateToken}>
-        <label htmlFor="new-token">トークンの変更</label>
-        <input
-          id="new-token"
-          type="password"
-          value={token}
-          onChange={(event) => setToken(event.target.value)}
-          placeholder="新しいトークン (xoxp-...)"
-          disabled={busy}
-        />
-        <button type="submit" className="primary" disabled={busy}>
-          トークンを更新
+      <div className="popup-form">
+        <label>サーバー</label>
+        <p className="popup-hint">{serverUrl}</p>
+        <p className="popup-hint">
+          サーバーが Slack を定期的に巡回して更新します。最後に同期した時刻:{" "}
+          {formatUnix(syncStatus?.lastFinishedAt ?? null)}
+          {syncStatus?.running ? " (同期中)" : ""}
+        </p>
+        <button type="button" onClick={() => void handleSyncNow()} disabled={busy}>
+          今すぐ全体を同期
         </button>
-        {tokenStatus && (
+        {syncNow && (
           <p
             className={
-              tokenStatus.kind === "error"
+              syncNow.kind === "error"
                 ? "popup-status popup-status--error"
-                : tokenStatus.kind === "ok"
+                : syncNow.kind === "ok"
                   ? "popup-status popup-status--ok"
                   : "popup-status"
             }
           >
-            {tokenStatus.text}
+            {syncNow.text}
           </p>
         )}
-        <p className="popup-hint">トークンはこのPCの資格情報ストアに保存されます。</p>
-      </form>
-
-      <hr />
-
-      <div className="popup-form">
-        <label>自動更新</label>
-        <p className="popup-hint">
-          {autoRefreshEnabled ? "5分ごとに自動で再取得しています。" : "自動更新は停止中です。"}
-        </p>
-        <button
-          type="button"
-          onClick={() => {
-            setAutoRefreshEnabled(!autoRefreshEnabled);
-            void writeLog("info", autoRefreshEnabled ? "auto refresh stopped" : "auto refresh resumed");
-          }}
-        >
-          {autoRefreshEnabled ? "自動更新を停止" : "自動更新を再開"}
-        </button>
       </div>
 
       <hr />
 
       <button type="button" className="danger" onClick={() => void performLogout()}>
-        ログアウト
+        接続を解除
       </button>
+      <p className="popup-hint">保存したサーバー URL と API キーを削除し、接続画面に戻ります。</p>
     </div>
   );
 }

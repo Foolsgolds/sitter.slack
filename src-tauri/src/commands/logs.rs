@@ -1,6 +1,6 @@
 use tauri::AppHandle;
 
-use slacksitter_core::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult};
 use crate::logging;
 
 /// Enough history for the log viewer without shipping a whole day's file to the UI.

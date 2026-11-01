@@ -1,32 +1,50 @@
 # SlackSitter
 
 `SlackSitter` は Slack のチャンネルを横並びで閲覧するためのデスクトップアプリです。
-Tauri 2 (Rust + React / TypeScript) で作られています。
+Slack のデータを SQLite に貯める常駐サーバー (`slacksitter-server`) と、それを表示するデスクトップアプリ (Tauri 2 + React / TypeScript) で構成されています。
 以前は WinUI 3 / .NET 8 のアプリでしたが、Tauri へ移行しました。
+
+```
+┌──────────────────────────┐          ┌────────────────────────────────────┐
+│ Tauri (UI シェル)          │  HTTP    │ slacksitter-server (axum)           │
+│  React                    │◀────────▶│  ├ REST API  (Bearer API キー)       │
+│  接続設定 / カスタムボード   │  SSE     │  ├ 同期ワーカー (Slack を定期巡回)    │
+└──────────────────────────┘          │  └ SQLite (sqlx)                     │
+                                      └─────────────────┬──────────────────┘
+                                                        │ Slack Web API
+                                                        ▼
+```
+
+Slack のトークンはサーバーだけが持ちます。
+デスクトップアプリはサーバーの URL と API キーだけを保存します。
 
 ## 主な機能
 
-- Slack User OAuth Token による認証 (トークンは OS の資格情報ストアに保存)
+- サーバーが Slack を定期的に巡回して SQLite に蓄積 (Slack の呼び出し回数制限に合わせて間隔を空ける)
+- サーバーへの接続 (サーバー URL と API キー。API キーは OS の資格情報ストアに保存)
 - `#times*` チャンネルの横並び表示 (メッセージ本文、スレッド返信、画像、リアクション)
 - 参加中 / 未参加チャンネルのフィルター切り替え
 - カスタムボード (任意のチャンネルを選んだボードを最大 10 件)
 - メッセージの投稿、リアクションの追加 / 取り消し
-- ユーザー情報の表示、トークンの変更、ログアウト
-- 5 分ごとの自動更新 (停止 / 再開が可能)
-- ログの表示とコピー
+- ユーザー情報の表示、サーバーへの今すぐ同期の依頼、接続の解除
+- サーバーの更新通知 (SSE) による自動更新。接続が切れたときは 30 秒ごとのポーリングで補う
+- ログの表示とコピー (アプリのログとサーバーのログ)
 
 ## 技術スタック
 
-- Tauri 2 (Rust)
-  - `reqwest` (Slack Web API)、`tokio`、`serde`
-  - `keyring` (トークン保存)、`tracing` (ログ)
+- サーバー (Rust、`crates/server`)
+  - `axum` (Web API、SSE)、`tokio`、`tower-http` (CORS)、`figment` (設定)
+  - `sqlx` + SQLite (蓄積)、`reqwest` (Slack Web API)、`tracing` (ログ)
+- Tauri 2 (Rust、`src-tauri`)
+  - `keyring` (API キーの保存)、`tracing` (ログ)、`serde`
 - React 19 + TypeScript + Vite
   - `zustand` (状態管理)
   - `@tanstack/react-virtual` (チャンネル列の横方向仮想化)
   - `@floating-ui/react` (吹き出しポップアップ)
 
-Slack との通信はすべて Rust 側で行います。
-フロントエンドは Tauri のコマンドとイベントだけを使い、Slack API を直接呼びません。
+Slack との通信と DB はすべてサーバーが行います。
+フロントエンドはサーバーの Web API (`fetch`) と SSE だけを使い、Slack API を直接呼びません。
+Tauri の Rust 側は、接続設定、カスタムボード、UI のログだけを扱います。
 
 ## プロジェクト構成
 
@@ -41,14 +59,14 @@ Slack との通信はすべて Rust 側で行います。
   - `tests/api.rs` — API の統合テスト
 - `slacksitter.example.toml` — サーバー設定の例
 - `src-tauri/` — Tauri シェル (Rust)
-  - `src/commands/` — フロントエンドから呼ばれる Tauri コマンド
-  - `src/persistence/` — トークン (資格情報ストア)、カスタムボード (JSON)
+  - `src/commands/` — フロントエンドから呼ばれる Tauri コマンド (接続設定、カスタムボード、ログ)
+  - `src/persistence/` — サーバー接続設定 (URL は JSON、API キーは資格情報ストア)、カスタムボード (JSON)
   - `src/logging.rs` — ファイルログ
 - `src/` — React (フロントエンド)
   - `components/` — 画面部品
   - `store/` — zustand ストア
-  - `actions/` — 複数の部品から使う操作 (更新、ログアウト、ボード操作)
-  - `api/` — Tauri コマンド / イベントの型付きラッパー
+  - `actions/` — 複数の部品から使う操作 (読み込み、更新ボタン、SSE の処理、接続の解除、ボード操作)
+  - `api/` — サーバーの Web API / SSE のクライアント (`client.ts`、`events.ts`) と Tauri コマンドのラッパー (`commands.ts`)
   - `types/models.ts` — Rust の表示用モデルに対応する型
 
 詳しくは次の文書を参照してください。
@@ -76,13 +94,30 @@ cd slack.sitter
 npm install
 ```
 
-### 3. 開発時の起動
+### 3. サーバーの起動 (先に起動します)
+
+デスクトップアプリはサーバーに接続して動くので、サーバーを先に起動します。
+設定ファイルを作り、Slack のトークンと API キーを書きます。
+
+```powershell
+Copy-Item slacksitter.example.toml slacksitter.toml
+# slacksitter.toml の slack.token と server.api_key を書き換える
+cargo run -p slacksitter-server -- --config slacksitter.toml
+```
+
+設定項目、API 一覧、環境変数での指定は [SERVER.md](SERVER.md) を参照してください。
+起動後、数分たつと `times*` チャンネルのメッセージが DB に貯まります。
+
+### 4. デスクトップアプリの起動
 
 ```powershell
 npm run tauri dev
 ```
 
-### 4. テスト
+初回は「サーバー接続」画面が出ます。
+サーバー URL (既定 `http://127.0.0.1:8787`) と、`server.api_key` の値を入力してください。
+
+### 5. テスト
 
 ```powershell
 cargo test
@@ -96,7 +131,7 @@ cargo test
 npx tsc --noEmit
 ```
 
-### 5. 配布用ビルド
+### 6. 配布用ビルド
 
 ```powershell
 npm run tauri build
@@ -104,7 +139,7 @@ npm run tauri build
 
 ## Slack 側で必要な権限
 
-User Token Scopes に少なくとも以下が必要です。
+サーバーの `slack.token` (User OAuth Token) の User Token Scopes に、少なくとも以下が必要です。
 
 - `channels:read`
 - `channels:history`
@@ -124,10 +159,15 @@ User Token Scopes に少なくとも以下が必要です。
 
 | 内容 | 場所 |
 |------|------|
-| アクセストークン | OS の資格情報ストア (サービス名 `SlackSitter`) |
+| サーバーの URL | `%APPDATA%\com.yanqirenshi.slacksitter\server-settings.json` |
+| サーバーの API キー | OS の資格情報ストア (サービス名 `SlackSitter`、ユーザー名 `server_api_key`) |
 | カスタムボード、選択中のフィルター | `%APPDATA%\com.yanqirenshi.slacksitter\custom-board.json` |
-| ログ (日ごとに 1 ファイル、7 日分) | `%LOCALAPPDATA%\com.yanqirenshi.slacksitter\logs\` |
+| アプリのログ (日ごとに 1 ファイル、7 日分) | `%LOCALAPPDATA%\com.yanqirenshi.slacksitter\logs\` |
+| Slack のトークンと API キー (サーバー側) | サーバーの `slacksitter.toml` または環境変数 (`.gitignore` 済み) |
+| Slack のデータ (サーバー側) | SQLite (既定 `./data/slacksitter.db`) |
+| サーバーのログ | 既定 `./logs/` (日ごとに 1 ファイル、14 日分) |
 
-旧 WinUI 版はトークンを `.env` に平文で保存していました。
-Tauri 版は `.env` を読み込みません。
-初回は認証画面でトークンを入力し直してください。
+以前のバージョンは Slack のトークンを OS の資格情報ストア (`slack_access_token`) に保存していました。
+今のバージョンはそれを読み込みません。
+トークンはサーバーの設定に書いてください。
+旧 WinUI 版の `.env` も読み込みません。
