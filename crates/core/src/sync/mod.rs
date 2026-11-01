@@ -2,6 +2,8 @@
 //! one catalog / one channel; `SyncScheduler` walks the targets on a timer.
 
 use std::cmp::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,6 +24,7 @@ pub mod scheduler;
 mod tests;
 
 pub use scheduler::{CycleError, CycleSummary, SyncScheduler, SyncStatus};
+
 
 #[derive(Debug, Clone)]
 pub struct SyncConfig {
@@ -55,17 +58,47 @@ impl Default for SyncConfig {
     }
 }
 
+/// Who started a batch of syncs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncKind {
+    /// The scheduler's own rounds.
+    Scheduler,
+    /// Someone asked for it (the API's "sync now" calls).
+    Manual,
+}
+
+impl SyncKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SyncKind::Scheduler => "scheduler",
+            SyncKind::Manual => "manual",
+        }
+    }
+}
+
+/// An id for one batch of syncs, unique within this process and across restarts.
+pub fn new_batch_id() -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("{millis:x}-{}", NEXT.fetch_add(1, AtomicOrdering::Relaxed))
+}
+
 /// Progress notifications (the server turns these into SSE events).
+/// `Started` / `Progress` / `Completed` carry the id and kind of their batch, so a
+/// client can tell the sync it asked for from the scheduler's rounds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncEvent {
-    /// A pass over `total` targets began.
-    Started { total: usize },
-    /// `done` of `total` targets have been tried.
-    Progress { done: usize, total: usize },
+    /// A batch over `total` channels began.
+    Started { batch_id: String, kind: SyncKind, total: usize },
+    /// `done` of `total` channels have been tried.
+    Progress { batch_id: String, kind: SyncKind, done: usize, total: usize },
     /// New or changed messages for this channel are now in the database.
     ChannelUpdated { channel_id: String },
-    /// The pass ended; `failed` targets could not be synced.
-    Completed { failed: usize },
+    /// The batch ended; `failed` channels could not be synced.
+    Completed { batch_id: String, kind: SyncKind, failed: usize },
     /// A catalog or channel sync failed (the message never contains a token).
     Error { message: String },
 }

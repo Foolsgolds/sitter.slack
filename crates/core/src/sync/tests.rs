@@ -605,8 +605,8 @@ async fn a_cycle_syncs_every_target_and_reports_progress() {
     let scheduler = SyncScheduler::new(fx.service.clone());
     let mut events = fx.service.subscribe();
 
-    let summary = scheduler.run_cycle(false).await.unwrap();
-    assert_eq!(summary, CycleSummary { total: 2, failed: 0 });
+    let summary = scheduler.run_cycle(false, SyncKind::Manual).await.unwrap();
+    assert_eq!((summary.total, summary.failed), (2, 0));
     assert!(!scheduler.status().running);
     assert!(scheduler.status().last_finished_at.is_some());
 
@@ -614,8 +614,27 @@ async fn a_cycle_syncs_every_target_and_reports_progress() {
     while let Ok(event) = events.try_recv() {
         seen.push(event);
     }
-    assert_eq!(seen.first(), Some(&SyncEvent::Started { total: 2 }));
-    assert_eq!(seen.last(), Some(&SyncEvent::Completed { failed: 0 }));
+    // Every event of the batch carries the batch's id and kind.
+    let batch_id = summary.batch_id.clone();
+    assert_eq!(
+        seen.first(),
+        Some(&SyncEvent::Started { batch_id: batch_id.clone(), kind: SyncKind::Manual, total: 2 })
+    );
+    assert_eq!(
+        seen.last(),
+        Some(&SyncEvent::Completed { batch_id: batch_id.clone(), kind: SyncKind::Manual, failed: 0 })
+    );
+    let progress: Vec<_> = seen
+        .iter()
+        .filter_map(|e| match e {
+            SyncEvent::Progress { batch_id: id, kind, done, .. } => Some((id.clone(), *kind, *done)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        progress,
+        [(batch_id.clone(), SyncKind::Manual, 1), (batch_id, SyncKind::Manual, 2)]
+    );
     let updated: Vec<_> = seen
         .iter()
         .filter_map(|e| match e {
@@ -633,8 +652,8 @@ async fn a_failing_channel_does_not_stop_the_cycle() {
     let scheduler = SyncScheduler::new(fx.service.clone());
     // C1 is not synced because history fails for everyone...
     fx.fake.with(|s| s.fail_history = Some("boom".into()));
-    let summary = scheduler.run_cycle(false).await.unwrap();
-    assert_eq!(summary, CycleSummary { total: 2, failed: 2 });
+    let summary = scheduler.run_cycle(false, SyncKind::Scheduler).await.unwrap();
+    assert_eq!((summary.total, summary.failed), (2, 2));
     // ...and both were still attempted.
     assert_eq!(fx.fake.calls("conversations.history").len(), 2);
 }
@@ -656,9 +675,9 @@ async fn a_second_cycle_is_refused_while_one_is_running_and_calls_are_spaced() {
     let scheduler = SyncScheduler::new(service);
     let started = tokio::time::Instant::now();
 
-    let (first, second) = tokio::join!(scheduler.run_cycle(true), async {
+    let (first, second) = tokio::join!(scheduler.run_cycle(true, SyncKind::Manual), async {
         tokio::task::yield_now().await;
-        scheduler.run_cycle(true).await
+        scheduler.run_cycle(true, SyncKind::Manual).await
     });
     assert!(first.is_ok());
     assert!(matches!(second, Err(CycleError::AlreadyRunning)));
@@ -808,4 +827,58 @@ async fn posting_resolves_the_channel_name_case_insensitively() {
     assert!(fx.service.post_message("nope", "x").await.unwrap_err().to_string().contains("channel not found"));
     assert!(fx.service.post_message("general", "   ").await.is_err());
     assert_eq!(fx.fake.calls("chat.postMessage").len(), 1);
+}
+
+#[test]
+fn batch_ids_are_unique_and_kinds_have_wire_names() {
+    let a = new_batch_id();
+    let b = new_batch_id();
+    assert_ne!(a, b);
+    assert!(!a.is_empty());
+    assert_eq!(SyncKind::Scheduler.as_str(), "scheduler");
+    assert_eq!(SyncKind::Manual.as_str(), "manual");
+}
+
+#[tokio::test]
+async fn the_loop_marks_its_batches_as_scheduler_rounds() {
+    let fake = Arc::new(FakeSlack::default());
+    fake.add_channel("C1", "times_alice");
+    let pool = db::connect_memory().await.unwrap();
+    let service = SyncService::new(
+        pool,
+        fake,
+        SyncConfig {
+            request_spacing: Duration::ZERO,
+            cycle_interval: Duration::from_millis(30),
+            ..Default::default()
+        },
+    );
+    let mut events = service.subscribe();
+    let scheduler = Arc::new(SyncScheduler::new(service));
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let runner = {
+        let scheduler = scheduler.clone();
+        async move {
+            scheduler
+                .run(async {
+                    let _ = stopped.await;
+                })
+                .await
+        }
+    };
+    let watcher = async {
+        let kind = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if let Ok(SyncEvent::Started { kind, .. }) = events.recv().await {
+                    break kind;
+                }
+            }
+        })
+        .await
+        .expect("a pass starts within 10s");
+        stop.send(()).unwrap();
+        kind
+    };
+    let ((), kind) = tokio::join!(runner, watcher);
+    assert_eq!(kind, SyncKind::Scheduler);
 }

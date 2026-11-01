@@ -64,12 +64,13 @@ impl SlackApi for NoSlack {
 struct TestApp {
     app: Router,
     pool: SqlitePool,
+    service: SyncService<NoSlack>,
 }
 
 async fn test_app() -> TestApp {
     let pool = db::connect_memory().await.unwrap();
     let service = SyncService::new(pool.clone(), Arc::new(NoSlack), SyncConfig::default());
-    let scheduler = Arc::new(SyncScheduler::new(service));
+    let scheduler = Arc::new(SyncScheduler::new(service.clone()));
     let me = Me {
         auth: AuthResult {
             workspace_url: "https://ws.slack.com".to_string(),
@@ -88,6 +89,7 @@ async fn test_app() -> TestApp {
     TestApp {
         app: router(state, cors),
         pool,
+        service,
     }
 }
 
@@ -191,6 +193,7 @@ async fn health_needs_no_key_and_everything_else_does() {
         (Method::POST, "/api/reactions/toggle"),
         (Method::POST, "/api/sync"),
         (Method::POST, "/api/sync/channels/C1"),
+        (Method::POST, "/api/sync/channels"),
         (Method::PUT, "/api/sync/targets"),
     ] {
         let request = Request::builder().method(method).uri(path).body(Body::empty()).unwrap();
@@ -299,7 +302,11 @@ async fn batch_returns_known_channels_in_request_order() {
     assert_eq!(ids, ["C2", "C1"]);
     assert_eq!(body[0]["messages"], json!([]));
 
-    let too_many: Vec<String> = (0..201).map(|i| format!("C{i}")).collect();
+    // Up to 500 channels per request (unknown ids are simply skipped), 501 is refused.
+    let many: Vec<String> = (0..500).map(|i| format!("C{i}")).collect();
+    let (status, _) = call(&t.app, send_json(Method::POST, "/api/channels/batch", json!({ "channelIds": many }))).await;
+    assert_eq!(status, StatusCode::OK);
+    let too_many: Vec<String> = (0..501).map(|i| format!("C{i}")).collect();
     let (status, _) = call(&t.app, send_json(Method::POST, "/api/channels/batch", json!({ "channelIds": too_many }))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
@@ -408,6 +415,20 @@ async fn custom_targets_can_be_read_and_replaced() {
 }
 
 #[tokio::test]
+async fn unknown_channels_cannot_become_sync_targets() {
+    let t = test_app().await;
+    seed(&t.pool).await;
+    let request = send_json(Method::PUT, "/api/sync/targets", json!({ "channelIds": ["C1", "CNOPE", "CALSO"] }));
+    let (status, body) = call(&t.app, request).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "unknown channel ids: [CNOPE, CALSO]");
+
+    // Nothing was stored.
+    let (_, body) = call(&t.app, get("/api/sync/targets", Some(API_KEY))).await;
+    assert_eq!(body, json!({ "channelIds": [] }));
+}
+
+#[tokio::test]
 async fn syncing_an_unknown_channel_is_a_404_and_a_known_one_is_accepted() {
     let t = test_app().await;
     seed(&t.pool).await;
@@ -422,8 +443,52 @@ async fn syncing_an_unknown_channel_is_a_404_and_a_known_one_is_accepted() {
     assert_eq!(call(&t.app, post("/api/sync/channels/CNOPE")).await.0, StatusCode::NOT_FOUND);
     let (status, body) = call(&t.app, post("/api/sync/channels/C1")).await;
     assert_eq!(status, StatusCode::ACCEPTED);
-    assert_eq!(body, json!({ "started": true }));
-    assert_eq!(call(&t.app, post("/api/sync")).await.0, StatusCode::ACCEPTED);
+    assert_eq!(body["started"], true);
+    assert!(body["batchId"].as_str().is_some_and(|id| !id.is_empty()));
+    let (status, body) = call(&t.app, post("/api/sync")).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert!(body["batchId"].is_string());
+}
+
+#[tokio::test]
+async fn several_channels_sync_as_one_batch_and_bad_requests_are_refused() {
+    use slacksitter_core::sync::SyncEvent;
+
+    let t = test_app().await;
+    seed(&t.pool).await;
+    let mut events = t.service.subscribe();
+
+    let request = send_json(Method::POST, "/api/sync/channels", json!({ "channelIds": ["C1", "C2", " C1 "] }));
+    let (status, body) = call(&t.app, request).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let batch_id = body["batchId"].as_str().unwrap().to_string();
+
+    // One batch: started(2) .. progress .. completed, all with the id the response gave.
+    // (Slack is offline in this test, so both channels fail, which the batch counts.)
+    let mut seen = Vec::new();
+    while !matches!(seen.last(), Some(SyncEvent::Completed { .. })) {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(10), events.recv())
+            .await
+            .expect("the batch completes")
+            .unwrap();
+        if matches!(event, SyncEvent::Started { .. } | SyncEvent::Progress { .. } | SyncEvent::Completed { .. }) {
+            seen.push(event);
+        }
+    }
+    assert!(matches!(&seen[0], SyncEvent::Started { batch_id: id, total: 2, .. } if *id == batch_id));
+    assert!(matches!(seen.last(), Some(SyncEvent::Completed { batch_id: id, failed: 2, .. }) if *id == batch_id));
+
+    for (body, expected) in [
+        (json!({ "channelIds": [] }), "channelIds must not be empty"),
+        (json!({ "channelIds": ["C1", "CNOPE"] }), "unknown channel ids: [CNOPE]"),
+    ] {
+        let (status, body) = call(&t.app, send_json(Method::POST, "/api/sync/channels", body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], expected);
+    }
+    let too_many: Vec<String> = (0..501).map(|i| format!("C{i}")).collect();
+    let (status, _) = call(&t.app, send_json(Method::POST, "/api/sync/channels", json!({ "channelIds": too_many }))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -442,7 +507,7 @@ async fn events_is_a_server_sent_event_stream() {
 
 #[tokio::test]
 async fn sync_events_reach_subscribers_with_their_wire_names() {
-    use slacksitter_core::sync::SyncEvent;
+    use slacksitter_core::sync::{SyncEvent, SyncKind};
 
     let pool = db::connect_memory().await.unwrap();
     let service = SyncService::new(pool, Arc::new(NoSlack), SyncConfig::default());
@@ -461,20 +526,31 @@ async fn sync_events_reach_subscribers_with_their_wire_names() {
     let mut body = response.into_body();
     let _ready = body.frame().await.unwrap().unwrap();
 
-    service.emit(SyncEvent::Started { total: 2 });
+    service.emit(SyncEvent::Started { batch_id: "b1".into(), kind: SyncKind::Manual, total: 2 });
+    service.emit(SyncEvent::Progress { batch_id: "b1".into(), kind: SyncKind::Manual, done: 1, total: 2 });
     service.emit(SyncEvent::ChannelUpdated { channel_id: "C1".into() });
     service.emit(SyncEvent::Error { message: "missing_scope".into() });
-    service.emit(SyncEvent::Completed { failed: 1 });
+    service.emit(SyncEvent::Completed { batch_id: "b1".into(), kind: SyncKind::Scheduler, failed: 1 });
 
     let mut text = String::new();
     while !text.contains("sync-completed") {
         let frame = body.frame().await.unwrap().unwrap();
         text.push_str(&String::from_utf8(frame.into_data().unwrap().to_vec()).unwrap());
     }
-    assert!(text.contains("event: sync-started\ndata: {\"total\":2}"), "{text}");
+    assert!(
+        text.contains("event: sync-started\ndata: {\"batchId\":\"b1\",\"kind\":\"manual\",\"total\":2}"),
+        "{text}"
+    );
+    assert!(
+        text.contains("event: sync-progress\ndata: {\"batchId\":\"b1\",\"done\":1,\"kind\":\"manual\",\"total\":2}"),
+        "{text}"
+    );
     assert!(text.contains("event: channel-updated\ndata: {\"channelId\":\"C1\"}"), "{text}");
     assert!(text.contains("event: sync-error\ndata: {\"message\":\"missing_scope\"}"), "{text}");
-    assert!(text.contains("event: sync-completed\ndata: {\"failed\":1}"), "{text}");
+    assert!(
+        text.contains("event: sync-completed\ndata: {\"batchId\":\"b1\",\"failed\":1,\"kind\":\"scheduler\"}"),
+        "{text}"
+    );
 }
 
 #[tokio::test]

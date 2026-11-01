@@ -10,7 +10,7 @@ use tokio::sync::{Mutex, Notify, OwnedMutexGuard};
 use crate::db::now_unix;
 use crate::slack::api::SlackApi;
 
-use super::{Pacer, SyncEvent, SyncService};
+use super::{new_batch_id, Pacer, SyncEvent, SyncKind, SyncService};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncStatus {
@@ -22,6 +22,7 @@ pub struct SyncStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CycleSummary {
+    pub batch_id: String,
     pub total: usize,
     pub failed: usize,
 }
@@ -79,31 +80,33 @@ impl<A: SlackApi> SyncScheduler<A> {
     }
 
     /// One pass over every sync target. `paced` spaces the Slack calls by the
-    /// configured interval; a manual "sync now" would pass `false`.
+    /// configured interval. `kind` goes out on the batch's events.
     /// Fails with `AlreadyRunning` while another pass is in progress.
-    pub async fn run_cycle(&self, paced: bool) -> Result<CycleSummary, CycleError> {
+    pub async fn run_cycle(&self, paced: bool, kind: SyncKind) -> Result<CycleSummary, CycleError> {
         let _held = self.try_begin()?;
-        self.execute(paced).await
+        self.execute(paced, kind, new_batch_id()).await
     }
 
-    /// Starts a pass in the background and returns at once. Fails with
-    /// `AlreadyRunning` (and starts nothing) while another pass is in progress.
-    pub fn spawn_cycle(self: &Arc<Self>, paced: bool) -> Result<(), CycleError>
+    /// Starts a pass in the background and returns its batch id at once. Fails
+    /// with `AlreadyRunning` (and starts nothing) while another pass is in progress.
+    pub fn spawn_cycle(self: &Arc<Self>, paced: bool, kind: SyncKind) -> Result<String, CycleError>
     where
         A: 'static,
     {
         let held = self.try_begin()?;
         let this = self.clone();
+        let batch_id = new_batch_id();
+        let id = batch_id.clone();
         tokio::spawn(async move {
             let _held = held;
-            if let Err(err) = this.execute(paced).await {
+            if let Err(err) = this.execute(paced, kind, id).await {
                 tracing::error!("sync pass failed: {err}");
                 this.service.emit(SyncEvent::Error {
                     message: err.to_string(),
                 });
             }
         });
-        Ok(())
+        Ok(batch_id)
     }
 
     /// Takes the single-pass lock and flags the scheduler as running.
@@ -121,14 +124,18 @@ impl<A: SlackApi> SyncScheduler<A> {
         Ok((cycle, RunningGuard(self.status.clone())))
     }
 
-    async fn execute(&self, paced: bool) -> Result<CycleSummary, CycleError> {
+    async fn execute(&self, paced: bool, kind: SyncKind, batch_id: String) -> Result<CycleSummary, CycleError> {
         let targets = self
             .service
             .sync_targets()
             .await
             .map_err(|e| CycleError::Failed(e.to_string()))?;
         let total = targets.len();
-        self.service.emit(SyncEvent::Started { total });
+        self.service.emit(SyncEvent::Started {
+            batch_id: batch_id.clone(),
+            kind,
+            total,
+        });
 
         let unpaced = Pacer::new(Duration::ZERO);
         let pacer = if paced { &self.pacer } else { &unpaced };
@@ -139,12 +146,18 @@ impl<A: SlackApi> SyncScheduler<A> {
                 failed += 1;
             }
             self.service.emit(SyncEvent::Progress {
+                batch_id: batch_id.clone(),
+                kind,
                 done: index + 1,
                 total,
             });
         }
-        self.service.emit(SyncEvent::Completed { failed });
-        Ok(CycleSummary { total, failed })
+        self.service.emit(SyncEvent::Completed {
+            batch_id: batch_id.clone(),
+            kind,
+            failed,
+        });
+        Ok(CycleSummary { batch_id, total, failed })
     }
 
     /// Re-reads the catalog; remembers when it last succeeded.
@@ -172,7 +185,7 @@ impl<A: SlackApi> SyncScheduler<A> {
                 if catalog_due {
                     self.refresh_catalog().await;
                 }
-                match self.run_cycle(true).await {
+                match self.run_cycle(true, SyncKind::Scheduler).await {
                     Ok(summary) => {
                         tracing::info!(total = summary.total, failed = summary.failed, "sync pass finished");
                     }

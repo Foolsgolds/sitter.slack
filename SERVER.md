@@ -74,7 +74,7 @@ Ctrl+C で終了します。
 | 項目 | 既定値 | 内容 |
 |------|--------|------|
 | `server.bind` | `127.0.0.1:8787` | 待ち受けるアドレス。LAN に公開するなら `0.0.0.0:8787` にし、前段にリバースプロキシを置く |
-| `server.api_key` | なし (必須) | API キー。空だと起動しない |
+| `server.api_key` | なし (必須) | API キー。空、または設定例の `change-me` のままだと起動しない |
 | `server.cors_origins` | `tauri://localhost`、`http://tauri.localhost`、`http://localhost:1420` | ブラウザ (WebView) からの呼び出しを許可するオリジン。ここに無いオリジンには CORS ヘッダーを返さない |
 | `slack.token` | なし (必須) | Slack の User OAuth Token (`xoxp-...`) |
 | `slack.api_base_url` | `https://slack.com/api` | Slack API の接続先。ローカルの偽 Slack に向けるテスト用で、通常は設定しない |
@@ -128,17 +128,18 @@ JSON のキーは camelCase です。
 | GET | `/api/me` | `{ workspaceUrl, userId, currentUserAvatarUri, channelPrefix }`。`auth.test` の結果は起動時に取得して保持している。`channelPrefix` はボードに出すチャンネルの接頭辞 (`sync.channel_prefix`) |
 | GET | `/api/channels` | カタログ。`ChannelSummary[]` (アーカイブ済みを除く。名前順) |
 | GET | `/api/channels/{id}?limit=10` | `ChannelWithMessages` (DB から)。`limit` は 1〜100、既定 10。未知のチャンネルは 404 |
-| POST | `/api/channels/batch` | `{ "channelIds": [...] }` → `ChannelWithMessages[]` (DB から、指定順)。未知の ID は飛ばす。200 件まで。`?limit=` も使える |
+| POST | `/api/channels/batch` | `{ "channelIds": [...] }` → `ChannelWithMessages[]` (DB から、指定順)。未知の ID は飛ばす。500 件まで (それを超える数のチャンネルは、クライアントが分けて呼ぶ)。`?limit=` も使える |
 | GET | `/api/users/{id}` | `SlackUserProfileInfo`。DB に無ければ `users.info` を呼んで保存する |
 | GET | `/api/emoji` | `{ 名前: URL }` (alias 解決済み) |
 | POST | `/api/messages` | `{ "channel": "times_foo", "text": "..." }`。チャンネル名 (大文字小文字を区別しない) から ID を解決して `chat.postMessage`。成功すると `{ "ok": true, "channelId": "..." }` を返し、そのチャンネルの同期をバックグラウンドで始める。チャンネルが無ければ 404、本文が空なら 400 |
 | POST | `/api/reactions/toggle` | `{ "channelId", "ts", "name" }`。そのメッセージを読み直して自分のリアクション済みかを見て、追加か取り消しかを決める。成功後にメッセージを再取得して DB を更新し、`{ "reacted": true/false }` (操作後に自分がリアクションしているか) を返す |
 | GET | `/api/images?url=<URL エンコード済み>` | 画像プロキシ。`Content-Type` を付けてバイト列を返す (下記) |
 | GET | `/api/sync/status` | `{ running, lastStartedAt, lastFinishedAt, lastCatalogAt, channelPrefix, channels: [{ channelId, source, lastMessageTs, lastSyncedAt, lastError }] }`。時刻は Unix 秒。`channels` は同期対象と、対象から外れたが状態が残っているチャンネル (`source` は `null`) |
-| POST | `/api/sync` | 全ターゲットの同期を今すぐ始める (間隔は空けない)。202 `{ "started": true }`。巡回が実行中なら 409 |
-| POST | `/api/sync/channels/{id}` | 1 チャンネルを今すぐ同期する。202。未知のチャンネルは 404 |
+| POST | `/api/sync` | 全ターゲットの同期を今すぐ始める。呼び出しの間隔は巡回と同じく `request_spacing_seconds` だけ空ける (一気に叩くと Slack の 429 の待ちで、かえって遅くなるため)。202 `{ "started": true, "batchId": "..." }`。巡回が実行中なら 409 |
+| POST | `/api/sync/channels/{id}` | 1 チャンネルを今すぐ同期する (間隔は空けない)。202 `{ "started": true, "batchId": "..." }`。未知のチャンネルは 404 |
+| POST | `/api/sync/channels` | `{ "channelIds": [...] }` の複数のチャンネルを、1 つのバッチとして順に今すぐ同期する (間隔は空けない)。202 `{ "started": true, "batchId": "..." }`。空、500 件超、未知の ID を含むときは 400 (`unknown channel ids: [...]`)。ボードの更新ボタンが使う |
 | GET | `/api/sync/targets` | `{ "channelIds": [...] }` — `custom` 由来の同期対象 |
-| PUT | `/api/sync/targets` | `{ "channelIds": [...] }` で `custom` 由来の同期対象を置き換える。まだ一度も同期していないチャンネルは、バックグラウンドで同期を始める |
+| PUT | `/api/sync/targets` | `{ "channelIds": [...] }` で `custom` 由来の同期対象を置き換える。カタログにない ID を含むときは、何も保存せず 400 (`unknown channel ids: [...]`)。まだ一度も同期していないチャンネルは、バックグラウンドで同期を始める |
 | GET | `/api/events` | SSE (下記) |
 | GET | `/api/logs?lines=500` | ログファイル (最新のもの) の末尾。`text/plain`。`lines` は 1〜5000 |
 
@@ -158,11 +159,15 @@ JSON のキーは camelCase です。
 | イベント | data | 意味 |
 |----------|------|------|
 | `ready` | `{}` | 接続できた。最初に 1 回だけ届く |
-| `sync-started` | `{ "total": 件数 }` | 同期の巡回が始まった |
-| `sync-progress` | `{ "done": 件数, "total": 件数 }` | 1 チャンネルの処理が終わるたびに |
+| `sync-started` | `{ "batchId": "...", "kind": "scheduler" または "manual", "total": 件数 }` | 同期のバッチが始まった |
+| `sync-progress` | `{ "batchId": "...", "kind": "...", "done": 件数, "total": 件数 }` | 1 チャンネルの処理が終わるたびに |
 | `channel-updated` | `{ "channelId": "C..." }` | そのチャンネルのメッセージが DB に取り込まれた (新規または更新) |
-| `sync-completed` | `{ "failed": 件数 }` | 巡回が終わった。`failed` は失敗したチャンネル数 |
+| `sync-completed` | `{ "batchId": "...", "kind": "...", "failed": 件数 }` | バッチが終わった。`failed` は失敗したチャンネル数 |
 | `sync-error` | `{ "message": "..." }` | カタログまたはチャンネルの同期に失敗した。Slack のエラーコード (`missing_scope` など) を含む |
+
+`batchId` は、API の 202 応答の `batchId` と同じ値です。
+`kind` は、スケジューラーの巡回なら `scheduler`、API で依頼したものなら `manual` です。
+クライアントは、自分が依頼した同期の完了を、`batchId` が一致する `sync-completed` で知ってください。
 
 15 秒ごとにコメント行 (keep-alive) を送ります。
 遅れた接続は一部のイベントを取りこぼすことがあるので、クライアントは切断時や `sync-completed` の後に読み直してください。
@@ -173,7 +178,7 @@ JSON のキーは camelCase です。
 
 - 同期対象 (`sync_targets`) は、名前が `sync.channel_prefix` で始まるチャンネル (`prefix`) と、API で指定したチャンネル (`custom`) です。`prefix` はチャンネル一覧を取り直すたびに再計算します。
 - スケジューラーは対象を順に巡回し、`conversations.history` と `conversations.replies` の呼び出しの間を `sync.request_spacing_seconds` 空けます。1 周したら `sync.cycle_interval_seconds` 待ちます。
-- `POST /api/sync` と `POST /api/sync/channels/{id}` は間隔を空けずに呼びます。Slack が 429 を返したときは `Retry-After` に従って待ち、最大 3 回やり直します。
+- `POST /api/sync` (全体) は、巡回と同じ間隔を空けて呼びます。`POST /api/sync/channels/{id}` と `POST /api/sync/channels` (指定したチャンネルだけ) は間隔を空けずに呼びます。API で依頼したチャンネルの同期は、サーバー内で 1 バッチずつ順に実行します (多数のチャンネルを頼んでも、Slack に同時には出しません)。Slack が 429 を返したときは `Retry-After` に従って待ち、最大 3 回やり直します。
 - メッセージは `messages.raw_json` に Slack の応答のまま保存します。本文の解析と画像の抽出は読み出し時に行うので、解析を直しても再取得は要りません。
 
 ## テスト

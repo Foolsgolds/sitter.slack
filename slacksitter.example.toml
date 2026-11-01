@@ -5,7 +5,7 @@
 
 [server]
 bind = "127.0.0.1:8787"
-# 必須。空だと起動しません。長いランダムな文字列にしてください。
+# 必須。空、または change-me のままだと起動しません。長いランダムな文字列にしてください。
 api_key = "change-me"
 # ブラウザ (Tauri の WebView) から呼ぶことを許可するオリジン。
 cors_origins = ["tauri://localhost", "http://tauri.localhost", "http://localhost:1420"]

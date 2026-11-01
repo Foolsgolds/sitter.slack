@@ -15,6 +15,8 @@ use slacksitter_core::sync::SyncConfig;
 pub const CONFIG_PATH_ENV: &str = "SLACKSITTER_CONFIG";
 pub const DEFAULT_CONFIG_PATH: &str = "slacksitter.toml";
 const ENV_PREFIX: &str = "SLACKSITTER__";
+/// The placeholder in slacksitter.example.toml; starting with it would be an open door.
+const EXAMPLE_API_KEY: &str = "change-me";
 
 #[derive(Clone, Default, Deserialize)]
 #[serde(transparent)]
@@ -183,6 +185,11 @@ impl Config {
                 "slack.token is required (set it in the file or in SLACKSITTER__SLACK__TOKEN)".into(),
             ));
         }
+        if self.server.api_key.expose().trim() == EXAMPLE_API_KEY {
+            return Err(ConfigError::Invalid(format!(
+                "server.api_key is still the example value {EXAMPLE_API_KEY:?}; set your own"
+            )));
+        }
         self.server
             .bind
             .parse::<SocketAddr>()
@@ -251,6 +258,12 @@ mod tests {
         assert!(err.to_string().contains("server.api_key"));
         let err = parse("[server]\napi_key = \"k\"\n").unwrap_err();
         assert!(err.to_string().contains("slack.token"));
+    }
+
+    #[test]
+    fn the_example_api_key_is_refused() {
+        let err = parse("[server]\napi_key = \"change-me\"\n[slack]\ntoken = \"xoxp-t\"\n").unwrap_err();
+        assert!(err.to_string().contains("example"));
     }
 
     #[test]

@@ -17,7 +17,7 @@ use serde_json::json;
 use slacksitter_core::db::{store, view};
 use slacksitter_core::slack::api::SlackApi;
 use slacksitter_core::slack::models::{ChannelSummary, ChannelWithMessages, SlackUserProfileInfo};
-use slacksitter_core::sync::SyncEvent;
+use slacksitter_core::sync::{new_batch_id, SyncEvent, SyncKind};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tower_http::cors::CorsLayer;
@@ -29,7 +29,8 @@ use crate::state::AppState;
 
 const DEFAULT_MESSAGE_LIMIT: u32 = 10;
 const MAX_MESSAGE_LIMIT: u32 = 100;
-const MAX_BATCH_CHANNELS: usize = 200;
+const MAX_BATCH_CHANNELS: usize = 500;
+const MAX_SYNC_CHANNELS: usize = 500;
 const DEFAULT_LOG_LINES: usize = 500;
 const MAX_LOG_LINES: usize = 5000;
 
@@ -48,6 +49,7 @@ pub fn router<A: SlackApi + 'static>(state: AppState<A>, cors: CorsLayer) -> Rou
         .route("/api/images", get(image::<A>))
         .route("/api/sync/status", get(sync_status::<A>))
         .route("/api/sync", post(sync_all::<A>))
+        .route("/api/sync/channels", post(sync_channels::<A>))
         .route("/api/sync/channels/{id}", post(sync_channel::<A>))
         .route("/api/sync/targets", get(get_targets::<A>).put(put_targets::<A>))
         .route("/api/events", get(events::<A>))
@@ -297,11 +299,13 @@ async fn sync_status<A: SlackApi + 'static>(State(state): State<AppState<A>>) ->
     }))
 }
 
-/// Starts a pass over every target now (not spaced out) and returns at once;
-/// progress arrives on `/api/events`. 409 while a pass is already running.
+/// Starts a pass over every target now and returns at once, with the id of the
+/// batch (its events carry the same `batchId`, `kind` is `manual`). The calls are
+/// spaced like the scheduler's own, because hitting Slack with every channel at
+/// once only ends in 429 waits. 409 while a pass is already running.
 async fn sync_all<A: SlackApi + 'static>(State(state): State<AppState<A>>) -> ApiResult<(StatusCode, Json<serde_json::Value>)> {
-    state.scheduler().spawn_cycle(false)?;
-    Ok((StatusCode::ACCEPTED, Json(json!({ "started": true }))))
+    let batch_id = state.scheduler().spawn_cycle(true, SyncKind::Manual)?;
+    Ok((StatusCode::ACCEPTED, Json(json!({ "started": true, "batchId": batch_id }))))
 }
 
 async fn sync_channel<A: SlackApi + 'static>(
@@ -311,30 +315,97 @@ async fn sync_channel<A: SlackApi + 'static>(
     if !store::channel_exists(state.pool(), &id).await? {
         return Err(ApiError::not_found(format!("channel not found: {id}")));
     }
-    spawn_channel_sync(&state, vec![id]);
-    Ok((StatusCode::ACCEPTED, Json(json!({ "started": true }))))
+    let batch_id = spawn_channel_sync(&state, vec![id]);
+    Ok((StatusCode::ACCEPTED, Json(json!({ "started": true, "batchId": batch_id }))))
 }
 
-/// Syncs the channels one after another in the background, announcing the
-/// batch with `sync-started` / `sync-completed` like a scheduler pass.
-fn spawn_channel_sync<A: SlackApi + 'static>(state: &AppState<A>, channel_ids: Vec<String>) {
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncChannelsRequest {
+    channel_ids: Vec<String>,
+}
+
+/// Syncs several channels now, one after another, as one batch. The board's
+/// refresh button uses this instead of one request per channel. Unknown ids are
+/// rejected up front (400).
+async fn sync_channels<A: SlackApi + 'static>(
+    State(state): State<AppState<A>>,
+    Json(body): Json<SyncChannelsRequest>,
+) -> ApiResult<(StatusCode, Json<serde_json::Value>)> {
+    let channel_ids = clean_ids(body.channel_ids);
+    if channel_ids.is_empty() {
+        return Err(ApiError::bad_request("channelIds must not be empty"));
+    }
+    if channel_ids.len() > MAX_SYNC_CHANNELS {
+        return Err(ApiError::bad_request(format!("at most {MAX_SYNC_CHANNELS} channels per request")));
+    }
+    reject_unknown_channels(&state, &channel_ids).await?;
+    let batch_id = spawn_channel_sync(&state, channel_ids);
+    Ok((StatusCode::ACCEPTED, Json(json!({ "started": true, "batchId": batch_id }))))
+}
+
+/// Trimmed, non-empty, de-duplicated, in the order given.
+fn clean_ids(ids: Vec<String>) -> Vec<String> {
+    let mut cleaned: Vec<String> = Vec::new();
+    for id in ids {
+        let id = id.trim().to_string();
+        if !id.is_empty() && !cleaned.contains(&id) {
+            cleaned.push(id);
+        }
+    }
+    cleaned
+}
+
+/// 400 `unknown channel ids: [...]` when any id is not in the catalog.
+async fn reject_unknown_channels<A: SlackApi + 'static>(state: &AppState<A>, ids: &[String]) -> ApiResult<()> {
+    let mut unknown = Vec::new();
+    for id in ids {
+        if !store::channel_exists(state.pool(), id).await? {
+            unknown.push(id.as_str());
+        }
+    }
+    if unknown.is_empty() {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(format!("unknown channel ids: [{}]", unknown.join(", "))))
+    }
+}
+
+/// Syncs the channels one after another in the background (one batch at a time),
+/// announcing the batch with `sync-started` / `sync-progress` / `sync-completed`
+/// (kind `manual`). Returns the batch id.
+fn spawn_channel_sync<A: SlackApi + 'static>(state: &AppState<A>, channel_ids: Vec<String>) -> String {
     let service = state.service().clone();
+    let turn = state.manual_sync();
+    let batch_id = new_batch_id();
+    let id = batch_id.clone();
     tokio::spawn(async move {
+        let Ok(_turn) = turn.acquire_owned().await else { return };
+        let kind = SyncKind::Manual;
         service.emit(SyncEvent::Started {
+            batch_id: id.clone(),
+            kind,
             total: channel_ids.len(),
         });
         let mut failed = 0;
-        for (index, id) in channel_ids.iter().enumerate() {
-            if service.sync_channel(id).await.is_err() {
+        for (index, channel_id) in channel_ids.iter().enumerate() {
+            if service.sync_channel(channel_id).await.is_err() {
                 failed += 1;
             }
             service.emit(SyncEvent::Progress {
+                batch_id: id.clone(),
+                kind,
                 done: index + 1,
                 total: channel_ids.len(),
             });
         }
-        service.emit(SyncEvent::Completed { failed });
+        service.emit(SyncEvent::Completed {
+            batch_id: id,
+            kind,
+            failed,
+        });
     });
+    batch_id
 }
 
 #[derive(Serialize, Deserialize)]
@@ -359,20 +430,15 @@ async fn put_targets<A: SlackApi + 'static>(
     State(state): State<AppState<A>>,
     Json(body): Json<TargetsBody>,
 ) -> ApiResult<Json<TargetsBody>> {
-    let mut channel_ids: Vec<String> = Vec::new();
-    for id in body.channel_ids {
-        let id = id.trim().to_string();
-        if !id.is_empty() && !channel_ids.contains(&id) {
-            channel_ids.push(id);
-        }
-    }
+    let channel_ids = clean_ids(body.channel_ids);
+    // Nothing unknown may become a target: it would fail to sync for good.
+    reject_unknown_channels(&state, &channel_ids).await?;
     state.service().set_custom_targets(&channel_ids).await?;
 
     let mut fresh = Vec::new();
     for id in &channel_ids {
-        let known = store::channel_exists(state.pool(), id).await?;
         let synced = store::get_sync_state(state.pool(), id).await?.last_synced_at.is_some();
-        if known && !synced {
+        if !synced {
             fresh.push(id.clone());
         }
     }
@@ -386,10 +452,19 @@ async fn put_targets<A: SlackApi + 'static>(
 
 fn sse_event(event: SyncEvent) -> Event {
     let (name, data) = match event {
-        SyncEvent::Started { total } => ("sync-started", json!({ "total": total })),
-        SyncEvent::Progress { done, total } => ("sync-progress", json!({ "done": done, "total": total })),
+        SyncEvent::Started { batch_id, kind, total } => (
+            "sync-started",
+            json!({ "batchId": batch_id, "kind": kind.as_str(), "total": total }),
+        ),
+        SyncEvent::Progress { batch_id, kind, done, total } => (
+            "sync-progress",
+            json!({ "batchId": batch_id, "kind": kind.as_str(), "done": done, "total": total }),
+        ),
         SyncEvent::ChannelUpdated { channel_id } => ("channel-updated", json!({ "channelId": channel_id })),
-        SyncEvent::Completed { failed } => ("sync-completed", json!({ "failed": failed })),
+        SyncEvent::Completed { batch_id, kind, failed } => (
+            "sync-completed",
+            json!({ "batchId": batch_id, "kind": kind.as_str(), "failed": failed }),
+        ),
         SyncEvent::Error { message } => ("sync-error", json!({ "message": message })),
     };
     Event::default().event(name).data(data.to_string())

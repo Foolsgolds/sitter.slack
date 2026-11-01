@@ -3,6 +3,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use tokio::sync::Semaphore;
+
 use slacksitter_core::db::SqlitePool;
 use slacksitter_core::slack::api::SlackApi;
 use slacksitter_core::slack::models::AuthResult;
@@ -27,6 +29,7 @@ struct Inner<A> {
     me: Me,
     images: ImageProxy,
     log_dir: PathBuf,
+    manual_sync: Arc<Semaphore>,
 }
 
 impl<A> Clone for AppState<A> {
@@ -52,6 +55,7 @@ impl<A: SlackApi> AppState<A> {
                 me,
                 images,
                 log_dir,
+                manual_sync: Arc::new(Semaphore::new(1)),
             }),
         }
     }
@@ -82,6 +86,12 @@ impl<A: SlackApi> AppState<A> {
 
     pub fn log_dir(&self) -> &PathBuf {
         &self.inner.log_dir
+    }
+
+    /// One permit: batches of channel syncs requested through the API run one at a time,
+    /// so refreshing a whole board never hits Slack with every channel at once.
+    pub fn manual_sync(&self) -> Arc<Semaphore> {
+        self.inner.manual_sync.clone()
     }
 
     pub fn channel_prefix(&self) -> &str {
