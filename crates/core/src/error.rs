@@ -14,6 +14,20 @@ pub enum AppError {
     Persistence(String),
     #[error("credential store error: {0}")]
     Credential(String),
+    #[error("database error: {0}")]
+    Database(String),
+}
+
+impl From<sqlx::Error> for AppError {
+    fn from(err: sqlx::Error) -> Self {
+        AppError::Database(err.to_string())
+    }
+}
+
+impl From<sqlx::migrate::MigrateError> for AppError {
+    fn from(err: sqlx::migrate::MigrateError) -> Self {
+        AppError::Database(format!("migration failed: {err}"))
+    }
 }
 
 impl Serialize for AppError {

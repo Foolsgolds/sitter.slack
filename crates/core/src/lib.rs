@@ -2,5 +2,7 @@
 //! display models shared by every front end (Tauri shell, server).
 //! Nothing in here may depend on Tauri.
 
+pub mod db;
 pub mod error;
 pub mod slack;
+pub mod sync;

@@ -33,6 +33,8 @@ Slack との通信はすべて Rust 側で行います。
 - `Cargo.toml` — Cargo ワークスペース (`crates/core` と `src-tauri`)
 - `crates/core/` — `slacksitter-core` クレート (Tauri に依存しない)
   - `src/slack/` — Slack API クライアント、リトライ、メッセージ解析、表示用モデル
+  - `src/db/` — SQLite への書き込み (`store`)、表示用モデルの組み立て (`view`)。スキーマは `migrations/`
+  - `src/sync/` — Slack から SQLite への差分同期 (`SyncService`) と定期巡回 (`SyncScheduler`)
   - `src/error.rs` — 共通のエラー型 `AppError`
 - `src-tauri/` — Tauri シェル (Rust)
   - `src/commands/` — フロントエンドから呼ばれる Tauri コマンド
