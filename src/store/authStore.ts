@@ -16,7 +16,10 @@ interface AuthState {
   /** Boards show the channels whose name starts with this; set by the server (`/api/me`). */
   channelPrefix: string;
   errorMessage?: string;
+  /** While `checking`: why the saved server could not be reached yet (it is retried). */
+  connectNote?: string;
   setChecking: () => void;
+  setWaitingForServer: (note: string) => void;
   setAuthenticating: () => void;
   setAuthenticated: (result: MeResult, serverUrl: string) => void;
   setLoggedOut: (errorMessage?: string) => void;
@@ -25,7 +28,8 @@ interface AuthState {
 export const useAuthStore = create<AuthState>((set) => ({
   status: "checking",
   channelPrefix: DEFAULT_CHANNEL_PREFIX,
-  setChecking: () => set({ status: "checking" }),
+  setChecking: () => set({ status: "checking", connectNote: undefined }),
+  setWaitingForServer: (connectNote) => set({ status: "checking", connectNote }),
   setAuthenticating: () => set({ status: "authenticating", errorMessage: undefined }),
   setAuthenticated: (result, serverUrl) =>
     set({
@@ -36,6 +40,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       avatarUri: result.currentUserAvatarUri,
       channelPrefix: result.channelPrefix || DEFAULT_CHANNEL_PREFIX,
       errorMessage: undefined,
+      connectNote: undefined,
     }),
-  setLoggedOut: (errorMessage) => set({ status: "loggedOut", errorMessage }),
+  setLoggedOut: (errorMessage) => set({ status: "loggedOut", errorMessage, connectNote: undefined }),
 }));

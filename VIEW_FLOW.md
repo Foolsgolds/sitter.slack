@@ -24,7 +24,7 @@ React: api/client.ts ── actions/ ── store/ (zustand) ── components/
 
 | トリガー | 動作 |
 |----------|------|
-| 起動時 | 保存済みの接続設定 (`load_server_settings`) で `GET /api/me` を呼ぶ。成功すれば全体の読み込みへ。失敗したら接続画面を出す |
+| 起動時 | 保存済みの接続設定 (`load_server_settings`) で `GET /api/me` を呼ぶ。成功すれば全体の読み込みへ。サーバーに届かないときは、スプラッシュで「サーバーに接続しています...」と出して再試行する (1 秒、2 秒、4 秒と倍にして上限 30 秒。「接続設定を変える」で接続画面へ)。API キーが拒否された (401) ときだけ接続画面を出す |
 | 接続画面で「接続」 | `GET /api/health` と `GET /api/me` で確かめ、成功したら設定を保存して全体の読み込みへ |
 | 全体の読み込み (`loadWorkspace`) | カタログと絵文字を読み、`times*` (サーバーの `channel_prefix`) とカスタムボードのチャンネルを `POST /api/channels/batch` で読む。あわせて `PUT /api/sync/targets` でカスタムボードのチャンネルを伝える |
 | サーバーの SSE `channel-updated` | そのチャンネルだけを `GET /api/channels/{id}` で読み直す (200ms 内に重なったものはまとめて読む) |

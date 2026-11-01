@@ -64,13 +64,17 @@ export function connectEvents(handlers: EventHandlers): () => void {
   let stopped = false;
   const controller = new AbortController();
 
+  // Waits `ms`, or until the loop is stopped. The abort listener is removed again
+  // once the wait is over, so a long outage does not pile listeners up.
   const sleep = (ms: number) =>
     new Promise<void>((resolve) => {
-      const timer = window.setTimeout(resolve, ms);
-      controller.signal.addEventListener("abort", () => {
+      const done = () => {
         window.clearTimeout(timer);
+        controller.signal.removeEventListener("abort", done);
         resolve();
-      });
+      };
+      const timer = window.setTimeout(done, ms);
+      controller.signal.addEventListener("abort", done, { once: true });
     });
 
   async function loop() {

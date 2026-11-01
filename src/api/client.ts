@@ -180,12 +180,16 @@ export const getSyncStatus = () => json<SyncStatus>("/api/sync/status");
 export const getSyncTargets = () =>
   json<{ channelIds: string[] }>("/api/sync/targets").then((body) => body.channelIds);
 
-/** Replaces the server's custom (non-prefix) sync targets. */
+/**
+ * Replaces the server's custom (non-prefix) sync targets. `unknown` lists the ids the
+ * server ignored because its catalog does not have them (an archived channel left on a
+ * board, say); the rest were accepted.
+ */
 export const putSyncTargets = (channelIds: string[]) =>
-  json<{ channelIds: string[] }>("/api/sync/targets", {
+  json<{ channelIds: string[]; unknown: string[] }>("/api/sync/targets", {
     method: "PUT",
     body: JSON.stringify({ channelIds }),
-  }).then((body) => body.channelIds);
+  });
 
 export async function getServerLogs(lines = 500): Promise<string> {
   return (await send(`/api/logs?lines=${lines}`)).text();

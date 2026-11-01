@@ -28,9 +28,15 @@ export function customBoardChannelIds(): string[] {
  * as its `custom` targets and starts syncing the ones it has never seen.
  */
 export function syncCustomTargets() {
-  putSyncTargets(customBoardChannelIds()).catch((err) => {
-    void writeLog("warn", `could not update the server's sync targets: ${String(err)}`);
-  });
+  putSyncTargets(customBoardChannelIds())
+    .then(({ unknown }) => {
+      if (unknown.length > 0) {
+        void writeLog("warn", `the server ignored unknown channel ids on the boards: ${unknown.join(", ")}`);
+      }
+    })
+    .catch((err) => {
+      void writeLog("warn", `could not update the server's sync targets: ${String(err)}`);
+    });
 }
 
 /** Reads custom-board.json once at startup and restores the saved filter. */

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { getMe, setConnection } from "./api/client";
+import { ApiError, getMe, setConnection } from "./api/client";
+import { backoffDelay } from "./api/events";
 import { loadServerSettings } from "./api/commands";
 import { hydrateBoards, syncCustomTargets } from "./actions/boards";
 import { loadWorkspace, startServerSession } from "./actions/session";
@@ -22,6 +23,7 @@ function App() {
   const status = useAuthStore((s) => s.status);
   const channelPrefix = useAuthStore((s) => s.channelPrefix);
   const setChecking = useAuthStore((s) => s.setChecking);
+  const setWaitingForServer = useAuthStore((s) => s.setWaitingForServer);
   const setAuthenticated = useAuthStore((s) => s.setAuthenticated);
   const setLoggedOut = useAuthStore((s) => s.setLoggedOut);
 
@@ -35,6 +37,9 @@ function App() {
   const activeFilter = useUiStore((s) => s.activeFilter);
 
   // Startup: try the saved server connection before showing the connection screen.
+  // A server that is not up yet (it often starts together with the app) is retried
+  // with a growing delay while the splash says so; only a rejected key or another
+  // error sends the user to the connection screen, which they can also open themselves.
   useEffect(() => {
     let cancelled = false;
     setChecking();
@@ -45,8 +50,20 @@ function App() {
         return;
       }
       setConnection({ baseUrl: saved.serverUrl, apiKey: saved.apiKey });
-      const me = await getMe();
-      if (!cancelled) setAuthenticated(me, saved.serverUrl);
+      for (let attempt = 0; !cancelled; attempt++) {
+        try {
+          const me = await getMe();
+          if (!cancelled) setAuthenticated(me, saved.serverUrl);
+          return;
+        } catch (err) {
+          if (!(err instanceof ApiError) || err.status !== 0) throw err;
+          if (cancelled || useAuthStore.getState().status !== "checking") return;
+          setWaitingForServer(String(err));
+          await new Promise((resolve) => window.setTimeout(resolve, backoffDelay(attempt)));
+          // The user may have opened the connection screen while we waited.
+          if (useAuthStore.getState().status !== "checking") return;
+        }
+      }
     })().catch((err) => {
       // The saved settings stay; the connection screen shows why and lets the user retry.
       if (!cancelled) setLoggedOut(String(err));

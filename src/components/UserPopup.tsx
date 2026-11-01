@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getSyncStatus, getUserProfile, syncAll } from "../api/client";
+import { ApiError, getSyncStatus, getUserProfile, syncAll } from "../api/client";
 import { performLogout } from "../actions/session";
 import { useAuthStore } from "../store/authStore";
 import type { SlackUserProfileInfo, SyncStatus } from "../types/models";
@@ -53,7 +53,7 @@ export function UserPopup() {
       await syncAll();
       setSyncNow({ kind: "ok", text: "同期を始めました。更新されたチャンネルから順に表示されます。" });
     } catch (err) {
-      const running = err instanceof Error && /already running/i.test(err.message);
+      const running = err instanceof ApiError && err.status === 409;
       setSyncNow({
         kind: running ? "ok" : "error",
         text: running ? "同期はすでに実行中です。" : `同期を依頼できませんでした: ${String(err)}`,
