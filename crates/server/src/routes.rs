@@ -414,6 +414,14 @@ struct TargetsBody {
     channel_ids: Vec<String>,
 }
 
+/// The answer to `PUT /api/sync/targets`: the ids accepted, and the ids ignored.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TargetsPutResponse {
+    channel_ids: Vec<String>,
+    unknown: Vec<String>,
+}
+
 async fn get_targets<A: SlackApi + 'static>(State(state): State<AppState<A>>) -> ApiResult<Json<TargetsBody>> {
     let channel_ids = store::list_targets(state.pool())
         .await?
@@ -429,10 +437,19 @@ async fn get_targets<A: SlackApi + 'static>(State(state): State<AppState<A>>) ->
 async fn put_targets<A: SlackApi + 'static>(
     State(state): State<AppState<A>>,
     Json(body): Json<TargetsBody>,
-) -> ApiResult<Json<TargetsBody>> {
-    let channel_ids = clean_ids(body.channel_ids);
-    // Nothing unknown may become a target: it would fail to sync for good.
-    reject_unknown_channels(&state, &channel_ids).await?;
+) -> ApiResult<Json<TargetsPutResponse>> {
+    // Ids the catalog does not know (a channel archived long ago, say) are left out and
+    // reported back: one stale id on a board must not fail the whole update, and nothing
+    // unknown may become a target (it would fail to sync for good).
+    let mut channel_ids = Vec::new();
+    let mut unknown = Vec::new();
+    for id in clean_ids(body.channel_ids) {
+        if store::channel_exists(state.pool(), &id).await? {
+            channel_ids.push(id);
+        } else {
+            unknown.push(id);
+        }
+    }
     state.service().set_custom_targets(&channel_ids).await?;
 
     let mut fresh = Vec::new();
@@ -445,7 +462,7 @@ async fn put_targets<A: SlackApi + 'static>(
     if !fresh.is_empty() {
         spawn_channel_sync(&state, fresh);
     }
-    Ok(Json(TargetsBody { channel_ids }))
+    Ok(Json(TargetsPutResponse { channel_ids, unknown }))
 }
 
 // -------------------------------------------------------------------- events

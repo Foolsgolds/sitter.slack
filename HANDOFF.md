@@ -48,7 +48,7 @@ npm run tauri dev
 - サーバーは、各チャンネルの最新 `history_limit` 件 (既定 15) を毎回読み直す。内容が変わったメッセージだけを書き直し、`channel-updated` もそのときだけ流す。新着、最近のメッセージのリアクション、新しい返信が 1 回の呼び出しで DB に入る。保存済みの最新 `ts` に届くまで遡る (上限ページ数あり)
 - 全体の手動同期 (`POST /api/sync`) は、巡回と同じ `request_spacing_seconds` を空けて呼ぶ。指定したチャンネルだけの同期 (`POST /api/sync/channels/{id}`、`POST /api/sync/channels`) は間隔を空けない。API で依頼した同期は、サーバー内で 1 バッチずつ順に実行する
 - 同期の `sync-started` / `sync-progress` / `sync-completed` には `batchId` と `kind` (`scheduler` / `manual`) が付く。API の 202 応答にも同じ `batchId` が入る。更新ボタンは、自分が頼んだバッチの `sync-completed` を待って、更新中の表示を戻す
-- `PUT /api/sync/targets` と `POST /api/sync/channels` は、カタログにない ID を 400 で拒否する (同期が永久に失敗する対象を DB に残さないため)
+- `PUT /api/sync/targets` は、カタログにない ID を無視して `unknown` に入れて返す (古いチャンネルが 1 つ残っていても更新全体は失敗させず、同期が永久に失敗する対象も作らない)。`POST /api/sync/channels` は、未知の ID を含むと 400 で拒否する
 - `server.api_key` が設定例の `change-me` のままだと起動しない
 - `conversations.list` もリトライ対象にし、1 ページを 200 件にした (旧版との違い。理由は [SLACK_API.md](SLACK_API.md))
 - 本文の解析は旧版と同じ「トグル方式」をそのまま移した。`*` が閉じていないと、その後ろ全体が太字になる。解析は DB の `raw_json` から読み出し時に行うので、変えても再取得は要らない

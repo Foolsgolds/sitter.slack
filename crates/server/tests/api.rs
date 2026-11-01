@@ -403,7 +403,7 @@ async fn custom_targets_can_be_read_and_replaced() {
     let request = send_json(Method::PUT, "/api/sync/targets", json!({ "channelIds": ["C2", " C2 ", "", "C1"] }));
     let (status, body) = call(&t.app, request).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, json!({ "channelIds": ["C2", "C1"] }));
+    assert_eq!(body, json!({ "channelIds": ["C2", "C1"], "unknown": [] }));
 
     let (_, body) = call(&t.app, get("/api/sync/targets", Some(API_KEY))).await;
     let mut ids: Vec<String> = serde_json::from_value(body["channelIds"].clone()).unwrap();
@@ -411,21 +411,21 @@ async fn custom_targets_can_be_read_and_replaced() {
     assert_eq!(ids, ["C1", "C2"]);
 
     let (_, body) = call(&t.app, send_json(Method::PUT, "/api/sync/targets", json!({ "channelIds": [] }))).await;
-    assert_eq!(body, json!({ "channelIds": [] }));
+    assert_eq!(body, json!({ "channelIds": [], "unknown": [] }));
 }
 
 #[tokio::test]
-async fn unknown_channels_cannot_become_sync_targets() {
+async fn unknown_channels_are_ignored_and_reported_when_setting_targets() {
     let t = test_app().await;
     seed(&t.pool).await;
     let request = send_json(Method::PUT, "/api/sync/targets", json!({ "channelIds": ["C1", "CNOPE", "CALSO"] }));
     let (status, body) = call(&t.app, request).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["error"], "unknown channel ids: [CNOPE, CALSO]");
+    // The known channel is accepted; the stale ones neither fail the update nor become targets.
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "channelIds": ["C1"], "unknown": ["CNOPE", "CALSO"] }));
 
-    // Nothing was stored.
     let (_, body) = call(&t.app, get("/api/sync/targets", Some(API_KEY))).await;
-    assert_eq!(body, json!({ "channelIds": [] }));
+    assert_eq!(body, json!({ "channelIds": ["C1"] }));
 }
 
 #[tokio::test]
