@@ -46,6 +46,18 @@ pub trait SlackApi: Send + Sync {
     ) -> impl Future<Output = AppResult<Vec<Value>>> + Send;
 
     fn user_info(&self, user_id: &str) -> impl Future<Output = AppResult<SlackUser>> + Send;
+
+    /// `chat.postMessage`.
+    fn post_message(&self, channel_id: &str, text: &str) -> impl Future<Output = AppResult<()>> + Send;
+
+    /// `reactions.add` (`already_reacted` counts as success).
+    fn add_reaction(&self, channel_id: &str, ts: &str, name: &str) -> impl Future<Output = AppResult<()>> + Send;
+
+    /// `reactions.remove` (`no_reaction` counts as success).
+    fn remove_reaction(&self, channel_id: &str, ts: &str, name: &str) -> impl Future<Output = AppResult<()>> + Send;
+
+    /// The message with exactly this `ts`, raw; `None` when it no longer exists.
+    fn message_at(&self, channel_id: &str, ts: &str) -> impl Future<Output = AppResult<Option<Value>>> + Send;
 }
 
 impl SlackApi for SlackClient {
@@ -75,5 +87,21 @@ impl SlackApi for SlackClient {
 
     async fn user_info(&self, user_id: &str) -> AppResult<SlackUser> {
         SlackClient::user_info(self, user_id).await
+    }
+
+    async fn post_message(&self, channel_id: &str, text: &str) -> AppResult<()> {
+        SlackClient::post_message(self, channel_id, text).await
+    }
+
+    async fn add_reaction(&self, channel_id: &str, ts: &str, name: &str) -> AppResult<()> {
+        SlackClient::add_reaction(self, channel_id, ts, name).await
+    }
+
+    async fn remove_reaction(&self, channel_id: &str, ts: &str, name: &str) -> AppResult<()> {
+        SlackClient::remove_reaction(self, channel_id, ts, name).await
+    }
+
+    async fn message_at(&self, channel_id: &str, ts: &str) -> AppResult<Option<Value>> {
+        SlackClient::conversation_message_raw(self, channel_id, ts).await
     }
 }

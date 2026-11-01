@@ -32,6 +32,15 @@ npm run tauri dev
 - `conversations.list` もリトライ対象にし、1 ページを 200 件にした (旧版との違い。理由は [SLACK_API.md](SLACK_API.md))
 - 本文の解析は旧版と同じ「トグル方式」をそのまま移した。`*` が閉じていないと、その後ろ全体が太字になる
 
+## サーバー (Phase 3)
+
+- `crates/server` (`slacksitter-server`) は Tauri とは別プロセスで、Slack との通信と SQLite を受け持つ。起動方法と API は [SERVER.md](SERVER.md)
+- Slack トークンと API キーはサーバーの設定ファイル (TOML) か環境変数に置く。ログと標準出力には出さない (`Secret` 型が `Debug` をマスクする)
+- Tauri 側 (`src-tauri`) はまだ従来どおり Slack を直接呼んでいる。サーバーへの切り替えは Phase 4
+- 手動の同期 (`POST /api/sync`、`POST /api/sync/channels/{id}`) は呼び出し間隔を空けない。巡回 (スケジューラー) だけが `request_spacing_seconds` を空ける
+- 同期するのは各チャンネルの最新 `history_limit` 件だけ。それより古いメッセージの変更は DB に反映されない
+- `slack.api_base_url` はテスト用の設定で、偽の Slack に向けるために使う
+
 ## 既知の注意点
 
 - 同期 (`crates/core/src/sync/`) が読むのは、各チャンネルの最新 `history_limit` 件 (既定 15) と、そこに追加された新着だけ。それより古いメッセージのリアクション、編集、削除は DB に反映されない。削除されたメッセージは DB に残る

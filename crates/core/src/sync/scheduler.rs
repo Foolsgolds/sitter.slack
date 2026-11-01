@@ -5,7 +5,7 @@ use std::future::Future;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, OwnedMutexGuard};
 
 use crate::db::now_unix;
 use crate::slack::api::SlackApi;
@@ -37,7 +37,7 @@ pub enum CycleError {
 pub struct SyncScheduler<A> {
     service: SyncService<A>,
     pacer: Pacer,
-    cycle_lock: Mutex<()>,
+    cycle_lock: Arc<Mutex<()>>,
     status: Arc<StdMutex<SyncStatus>>,
     wake: Notify,
 }
@@ -59,7 +59,7 @@ impl<A: SlackApi> SyncScheduler<A> {
         Self {
             service,
             pacer,
-            cycle_lock: Mutex::new(()),
+            cycle_lock: Arc::new(Mutex::new(())),
             status: Arc::new(StdMutex::new(SyncStatus::default())),
             wake: Notify::new(),
         }
@@ -82,16 +82,46 @@ impl<A: SlackApi> SyncScheduler<A> {
     /// configured interval; a manual "sync now" would pass `false`.
     /// Fails with `AlreadyRunning` while another pass is in progress.
     pub async fn run_cycle(&self, paced: bool) -> Result<CycleSummary, CycleError> {
-        let Ok(_cycle) = self.cycle_lock.try_lock() else {
-            return Err(CycleError::AlreadyRunning);
-        };
+        let _held = self.try_begin()?;
+        self.execute(paced).await
+    }
+
+    /// Starts a pass in the background and returns at once. Fails with
+    /// `AlreadyRunning` (and starts nothing) while another pass is in progress.
+    pub fn spawn_cycle(self: &Arc<Self>, paced: bool) -> Result<(), CycleError>
+    where
+        A: 'static,
+    {
+        let held = self.try_begin()?;
+        let this = self.clone();
+        tokio::spawn(async move {
+            let _held = held;
+            if let Err(err) = this.execute(paced).await {
+                tracing::error!("sync pass failed: {err}");
+                this.service.emit(SyncEvent::Error {
+                    message: err.to_string(),
+                });
+            }
+        });
+        Ok(())
+    }
+
+    /// Takes the single-pass lock and flags the scheduler as running.
+    fn try_begin(&self) -> Result<(OwnedMutexGuard<()>, RunningGuard), CycleError> {
+        let cycle = self
+            .cycle_lock
+            .clone()
+            .try_lock_owned()
+            .map_err(|_| CycleError::AlreadyRunning)?;
         {
             let mut status = self.status.lock().unwrap();
             status.running = true;
             status.last_started_at = Some(now_unix());
         }
-        let _running = RunningGuard(self.status.clone());
+        Ok((cycle, RunningGuard(self.status.clone())))
+    }
 
+    async fn execute(&self, paced: bool) -> Result<CycleSummary, CycleError> {
         let targets = self
             .service
             .sync_targets()

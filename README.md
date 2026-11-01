@@ -30,12 +30,16 @@ Slack との通信はすべて Rust 側で行います。
 
 ## プロジェクト構成
 
-- `Cargo.toml` — Cargo ワークスペース (`crates/core` と `src-tauri`)
+- `Cargo.toml` — Cargo ワークスペース (`crates/core`、`crates/server`、`src-tauri`)
 - `crates/core/` — `slacksitter-core` クレート (Tauri に依存しない)
   - `src/slack/` — Slack API クライアント、リトライ、メッセージ解析、表示用モデル
   - `src/db/` — SQLite への書き込み (`store`)、表示用モデルの組み立て (`view`)。スキーマは `migrations/`
   - `src/sync/` — Slack から SQLite への差分同期 (`SyncService`) と定期巡回 (`SyncScheduler`)
   - `src/error.rs` — 共通のエラー型 `AppError`
+- `crates/server/` — `slacksitter-server` クレート (axum の Web API サーバー。常駐して Slack を巡回し、SQLite に蓄積する)
+  - `src/config.rs` — 設定 (TOML と環境変数)、`src/auth.rs` — API キー認証、`src/routes.rs` — REST と SSE、`src/images.rs` — 画像プロキシ
+  - `tests/api.rs` — API の統合テスト
+- `slacksitter.example.toml` — サーバー設定の例
 - `src-tauri/` — Tauri シェル (Rust)
   - `src/commands/` — フロントエンドから呼ばれる Tauri コマンド
   - `src/persistence/` — トークン (資格情報ストア)、カスタムボード (JSON)
@@ -49,6 +53,7 @@ Slack との通信はすべて Rust 側で行います。
 
 詳しくは次の文書を参照してください。
 
+- [SERVER.md](SERVER.md) — サーバーの設定、API 一覧、起動方法
 - [MODELS.md](MODELS.md) — 表示用モデル
 - [VIEW_FLOW.md](VIEW_FLOW.md) — データ取得から表示までの流れ
 - [SLACK_API.md](SLACK_API.md) — 利用している Slack API
@@ -83,7 +88,7 @@ npm run tauri dev
 cargo test
 ```
 
-リポジトリ直下で実行すると、ワークスペース全体 (`crates/core` と `src-tauri`) のテストが走ります。
+リポジトリ直下で実行すると、ワークスペース全体 (`crates/core`、`crates/server`、`src-tauri`) のテストが走ります。
 
 フロントエンドの型チェックは次のコマンドです。
 
