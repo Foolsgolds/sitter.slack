@@ -139,7 +139,7 @@ JSON のキーは camelCase です。
 | POST | `/api/sync/channels/{id}` | 1 チャンネルを今すぐ同期する (間隔は空けない)。202 `{ "started": true, "batchId": "..." }`。未知のチャンネルは 404 |
 | POST | `/api/sync/channels` | `{ "channelIds": [...] }` の複数のチャンネルを、1 つのバッチとして順に今すぐ同期する (間隔は空けない)。202 `{ "started": true, "batchId": "..." }`。空、500 件超、未知の ID を含むときは 400 (`unknown channel ids: [...]`)。ボードの更新ボタンが使う |
 | GET | `/api/sync/targets` | `{ "channelIds": [...] }` — `custom` 由来の同期対象 |
-| PUT | `/api/sync/targets` | `{ "channelIds": [...] }` で `custom` 由来の同期対象を置き換える。カタログにない ID を含むときは、何も保存せず 400 (`unknown channel ids: [...]`)。まだ一度も同期していないチャンネルは、バックグラウンドで同期を始める |
+| PUT | `/api/sync/targets` | `{ "channelIds": [...] }` で `custom` 由来の同期対象を置き換える。カタログにない ID は無視し (古いチャンネルが 1 つ残っていても更新全体は失敗させない)、応答は 200 `{ "channelIds": [受け付けた ID], "unknown": [無視した ID] }`。まだ一度も同期していないチャンネルは、バックグラウンドで同期を始める |
 | GET | `/api/events` | SSE (下記) |
 | GET | `/api/logs?lines=500` | ログファイル (最新のもの) の末尾。`text/plain`。`lines` は 1〜5000 |
 
