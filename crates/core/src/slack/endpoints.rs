@@ -280,3 +280,26 @@ fn raw_ts(message: &serde_json::Value) -> f64 {
         .and_then(|s| s.parse::<f64>().ok())
         .unwrap_or(f64::MIN)
 }
+
+impl SlackClient {
+    /// The single message with exactly this `ts` as raw JSON (`conversations.history`
+    /// with `oldest` = `latest` = `ts`, inclusive), or `None` when it is gone.
+    pub async fn conversation_message_raw(
+        &self,
+        channel_id: &str,
+        ts: &str,
+    ) -> AppResult<Option<serde_json::Value>> {
+        let query = [
+            ("channel", channel_id),
+            ("oldest", ts),
+            ("latest", ts),
+            ("inclusive", "true"),
+            ("limit", "1"),
+        ];
+        let body = self.with_retry(|| self.get("conversations.history", &query)).await?;
+        Ok(body
+            .get("messages")
+            .and_then(|v| v.as_array())
+            .and_then(|messages| messages.first().cloned()))
+    }
+}

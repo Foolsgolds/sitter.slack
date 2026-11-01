@@ -114,3 +114,8 @@ dist-ssr/
 
 # Cargo workspace build output
 /target/
+
+# SlackSitter server: real settings and local data
+/slacksitter.toml
+/data/
+/logs/

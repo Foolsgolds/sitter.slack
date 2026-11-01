@@ -447,3 +447,13 @@ pub async fn users_needing_refresh(
         .collect();
     Ok(user_ids.iter().filter(|id| !fresh.contains(*id)).cloned().collect())
 }
+
+/// Channel id for a name (case-insensitive), non-archived channels only.
+pub async fn channel_id_by_name(pool: &SqlitePool, name: &str) -> AppResult<Option<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM channels WHERE is_archived = 0 AND lower(name) = lower(?1) ORDER BY id LIMIT 1",
+    )
+    .bind(name)
+    .fetch_optional(pool)
+    .await?)
+}

@@ -20,6 +20,7 @@ const DEFAULT_RATE_LIMIT_WAIT_SECONDS: u64 = 30;
 pub struct SlackClient {
     http: reqwest::Client,
     token: String,
+    base_url: String,
 }
 
 impl SlackClient {
@@ -27,6 +28,16 @@ impl SlackClient {
         Self {
             http: reqwest::Client::new(),
             token: token.into(),
+            base_url: BASE_URL.to_string(),
+        }
+    }
+
+    /// A client that talks to `base_url` (e.g. `http://127.0.0.1:9999/api`) instead of
+    /// slack.com. For tests and local fakes only: the token is sent there.
+    pub fn with_base_url(token: impl Into<String>, base_url: impl Into<String>) -> Self {
+        Self {
+            base_url: base_url.into().trim_end_matches('/').to_string(),
+            ..Self::new(token)
         }
     }
 
@@ -39,7 +50,7 @@ impl SlackClient {
     pub async fn get(&self, method: &str, query: &[(&str, &str)]) -> AppResult<Value> {
         let response = self
             .http
-            .get(format!("{BASE_URL}/{method}"))
+            .get(format!("{}/{method}", self.base_url))
             .bearer_auth(&self.token)
             .query(query)
             .send()
@@ -51,7 +62,7 @@ impl SlackClient {
     pub async fn post_json(&self, method: &str, body: &Value) -> AppResult<Value> {
         let response = self
             .http
-            .post(format!("{BASE_URL}/{method}"))
+            .post(format!("{}/{method}", self.base_url))
             .bearer_auth(&self.token)
             .json(body)
             .send()

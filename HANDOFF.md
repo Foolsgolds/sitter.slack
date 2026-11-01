@@ -32,6 +32,18 @@ npm run tauri dev
 - `conversations.list` もリトライ対象にし、1 ページを 200 件にした (旧版との違い。理由は [SLACK_API.md](SLACK_API.md))
 - 本文の解析は旧版と同じ「トグル方式」をそのまま移した。`*` が閉じていないと、その後ろ全体が太字になる
 
+## サーバー (Phase 3)
+
+- `crates/server` (`slacksitter-server`) は Tauri とは別プロセスで、Slack との通信と SQLite を受け持つ。起動方法と API は [SERVER.md](SERVER.md)
+- Slack トークンと API キーはサーバーの設定ファイル (TOML) か環境変数に置く。ログと標準出力には出さない (`Secret` 型が `Debug` をマスクする)
+- Tauri 側 (`src-tauri`) はまだ従来どおり Slack を直接呼んでいる。サーバーへの切り替えは Phase 4
+- 全体の手動同期 (`POST /api/sync`) は、巡回と同じ `request_spacing_seconds` を空けて呼ぶ。指定したチャンネルだけの同期 (`POST /api/sync/channels/{id}`、`POST /api/sync/channels`) は間隔を空けない。API で依頼した同期は 1 バッチずつ順に実行する
+- 同期の `sync-started` / `sync-progress` / `sync-completed` には `batchId` と `kind` (`scheduler` / `manual`) が付く。API の 202 応答にも同じ `batchId` が入るので、クライアントは自分が頼んだ同期の完了を知れる
+- `PUT /api/sync/targets` は、カタログにない ID を無視して `unknown` に入れて返す (古いチャンネルが 1 つ残っていても更新全体は失敗させず、同期が永久に失敗する対象も作らない)。`POST /api/sync/channels` は、未知の ID を含むと 400 で拒否する
+- `server.api_key` が設定例の `change-me` のままだと起動しない
+- 同期するのは各チャンネルの最新 `history_limit` 件だけ。それより古いメッセージの変更は DB に反映されない
+- `slack.api_base_url` はテスト用の設定で、偽の Slack に向けるために使う
+
 ## 既知の注意点
 
 - 同期 (`crates/core/src/sync/`) が読むのは、各チャンネルの最新 `history_limit` 件 (既定 15) と、そこに追加された新着だけ。それより古いメッセージのリアクション、編集、削除は DB に反映されない。削除されたメッセージは DB に残る

@@ -175,3 +175,17 @@ Tauri のコマンド (上の表) とは別の経路で、現時点では `core`
 `last_message_ts` と `last_synced_at` は失敗では動かしません。
 メッセージと返信の書き込みは 1 つのトランザクションで行い、返信の取得に失敗した親メッセージが「最新」に見えてしまうことを防いでいます。
 `conversations.list` の途中で失敗したときは、チャンネルのアーカイブ判定を行いません。
+
+### サーバー (`crates/server`) が呼ぶ Slack API
+
+`slacksitter-server` は、上の同期ワーカーに加えて、API の要求に応じて次を呼びます。
+詳しくは [SERVER.md](SERVER.md) を参照してください。
+
+| API | 呼び出し元 | 内容 |
+|-----|-----------|------|
+| `auth.test` | 起動時に 1 回 | トークンの検証、ワークスペース URL と自分のユーザー ID の取得 (`GET /api/me` で返す) |
+| `users.info` | 起動時 (自分のアバター)、`GET /api/users/{id}` (DB に無いとき) | プロフィールの取得と保存 |
+| `chat.postMessage` | `POST /api/messages` | 投稿。成功後にそのチャンネルをバックグラウンドで同期する |
+| `conversations.history` (1 件) | `POST /api/reactions/toggle` | `oldest` = `latest` = `ts`、`inclusive`: true、`limit`: 1 で対象メッセージを読み、自分のリアクション済みかを判定する。操作後にもう一度読んで DB を更新する |
+| `reactions.add` / `reactions.remove` | `POST /api/reactions/toggle` | 判定の結果に応じて 1 回 (`already_reacted`、`no_reaction` は成功として扱う) |
+| 画像 (`files.slack.com` など) | `GET /api/images` | Slack のホストにだけ Bearer トークンを付けて取得する。同時 2 件まで |
