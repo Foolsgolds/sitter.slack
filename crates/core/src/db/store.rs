@@ -263,7 +263,8 @@ pub async fn record_sync_failure(pool: &SqlitePool, channel_id: &str, error: &st
 
 /// Upserts one message (top-level or reply) with its reactions and files.
 /// `raw` is stored verbatim as `raw_json`. Messages without a `ts` are skipped.
-/// Returns whether the message was written.
+/// Returns whether the message is new or differs from the stored copy (an
+/// unchanged re-read touches nothing, so it reports `false`).
 pub async fn upsert_message(
     conn: &mut SqliteConnection,
     channel_id: &str,
@@ -276,7 +277,7 @@ pub async fn upsert_message(
         return Ok(false);
     };
 
-    sqlx::query(
+    let written = sqlx::query(
         "INSERT INTO messages \
            (channel_id, ts, user_id, text, subtype, thread_ts, reply_count, latest_reply, raw_json, fetched_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
@@ -284,7 +285,8 @@ pub async fn upsert_message(
            user_id = excluded.user_id, text = excluded.text, subtype = excluded.subtype, \
            thread_ts = excluded.thread_ts, reply_count = excluded.reply_count, \
            latest_reply = excluded.latest_reply, raw_json = excluded.raw_json, \
-           fetched_at = excluded.fetched_at",
+           fetched_at = excluded.fetched_at \
+         WHERE messages.raw_json IS NOT excluded.raw_json",
     )
     .bind(channel_id)
     .bind(ts)
@@ -298,6 +300,10 @@ pub async fn upsert_message(
     .bind(now)
     .execute(&mut *conn)
     .await?;
+    if written.rows_affected() == 0 {
+        // Identical to what we have, so its reactions and files are current too.
+        return Ok(false);
+    }
 
     // Reactions: upsert the current set, drop the ones that were removed.
     let mut names = Vec::new();

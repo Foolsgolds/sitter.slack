@@ -584,12 +584,14 @@ async fn a_failing_channel_does_not_stop_the_cycle() {
 #[tokio::test]
 async fn a_second_cycle_is_refused_while_one_is_running_and_calls_are_spaced() {
     let fx = fixture(15).await;
-    tokio::time::pause();
+    // Real (short) time: pausing the clock lets tokio jump ahead while a sqlx worker
+    // thread is still answering, which times the pool out.
+    let spacing = Duration::from_millis(150);
     let service = SyncService::new(
         fx.pool.clone(),
         fx.fake.clone(),
         SyncConfig {
-            request_spacing: Duration::from_secs(60),
+            request_spacing: spacing,
             ..Default::default()
         },
     );
@@ -603,7 +605,7 @@ async fn a_second_cycle_is_refused_while_one_is_running_and_calls_are_spaced() {
     assert!(first.is_ok());
     assert!(matches!(second, Err(CycleError::AlreadyRunning)));
     // Two channels, one history call each: the second waits one spacing interval.
-    assert!(started.elapsed() >= Duration::from_secs(60));
+    assert!(started.elapsed() >= spacing);
 }
 
 #[tokio::test]
@@ -652,4 +654,60 @@ async fn the_loop_syncs_the_catalog_first_and_stops_on_shutdown() {
     assert_eq!(fake.calls("conversations.list").len(), 1); // catalog once, not due again
     assert!(fake.calls("conversations.history").len() >= 2);
     assert!(scheduler.status().last_catalog_at.is_some());
+}
+
+// ------------------------------------------------- change detection / broadcasts
+
+#[tokio::test]
+async fn channel_updated_is_sent_only_when_something_changed() {
+    let fx = fixture(15).await;
+    fx.fake.put_message("C1", message(1, "U1", "hi"));
+    let mut events = fx.service.subscribe();
+    let updates = |events: &mut broadcast::Receiver<SyncEvent>| {
+        let mut n = 0;
+        while let Ok(event) = events.try_recv() {
+            if matches!(event, SyncEvent::ChannelUpdated { .. }) {
+                n += 1;
+            }
+        }
+        n
+    };
+
+    let first = fx.service.sync_channel("C1").await.unwrap();
+    assert_eq!((first.messages, updates(&mut events)), (1, 1));
+
+    // The same newest page again: nothing is rewritten, nothing is announced.
+    let again = fx.service.sync_channel("C1").await.unwrap();
+    assert_eq!((again.messages, again.replies, updates(&mut events)), (0, 0, 0));
+
+    // A new reaction on a message that is already stored counts as a change.
+    let mut reacted = message(1, "U1", "hi");
+    reacted["reactions"] = json!([{ "name": "tada", "count": 1, "users": ["U2"] }]);
+    fx.fake.put_message("C1", reacted);
+    let changed = fx.service.sync_channel("C1").await.unwrap();
+    assert_eq!((changed.messages, updates(&mut events)), (1, 1));
+    assert_eq!(count(&fx.pool, "reactions").await, 1);
+}
+
+#[tokio::test]
+async fn thread_broadcasts_are_listed_in_the_channel_and_under_their_parent() {
+    let fx = fixture(15).await;
+    fx.fake.put_message("C1", thread_parent(2, "U1", 2, 4));
+    let mut broadcast = reply(4, 2, "U2");
+    broadcast["subtype"] = json!("thread_broadcast");
+    fx.fake.put_message("C1", broadcast.clone());
+    fx.fake.with(|s| {
+        s.replies
+            .insert(("C1".into(), ts(2)), vec![reply(3, 2, "U2"), broadcast.clone()]);
+    });
+    fx.service.sync_channel("C1").await.unwrap();
+
+    let channel = view::channel_with_messages(&fx.pool, "C1", 10, None).await.unwrap().unwrap();
+    // Listed on its own (newest first) like it was in conversations.history ...
+    let listed: Vec<_> = channel.messages.iter().map(|m| m.ts.clone().unwrap()).collect();
+    assert_eq!(listed, [ts(4), ts(2)]);
+    // ... and still shown under the parent, next to the plain reply.
+    let parent = channel.messages.iter().find(|m| m.ts.as_deref() == Some(ts(2).as_str())).unwrap();
+    let replies: Vec<_> = parent.replies.iter().map(|m| m.ts.clone().unwrap()).collect();
+    assert_eq!(replies, [ts(3), ts(4)]);
 }

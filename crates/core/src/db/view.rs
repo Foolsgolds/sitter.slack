@@ -50,7 +50,8 @@ pub async fn channel_with_messages(
 
     let parents = sqlx::query_as::<_, MessageRow>(
         "SELECT ts, raw_json FROM messages \
-         WHERE channel_id = ?1 AND (thread_ts IS NULL OR thread_ts = ts) \
+         WHERE channel_id = ?1 \
+           AND (thread_ts IS NULL OR thread_ts = ts OR subtype = 'thread_broadcast') \
          ORDER BY ts DESC LIMIT ?2",
     )
     .bind(channel_id)

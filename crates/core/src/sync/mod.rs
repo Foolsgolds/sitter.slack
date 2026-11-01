@@ -102,9 +102,9 @@ pub struct CatalogOutcome {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ChannelSyncOutcome {
-    /// Top-level messages written (new or re-read).
+    /// Top-level messages that are new or changed since the last sync.
     pub messages: usize,
-    /// Thread replies written.
+    /// Thread replies that are new or changed.
     pub replies: usize,
     pub pages: u32,
 }
