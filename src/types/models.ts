@@ -1,5 +1,6 @@
-// Mirrors the Rust display models in src-tauri/src/slack/models.rs
-// (serde `rename_all = "camelCase"`). Keep in sync by hand for now.
+// Mirrors the Rust display models in crates/core/src/slack/models.rs
+// (serde `rename_all = "camelCase"`), which the server returns as JSON.
+// Keep in sync by hand.
 
 export type SegmentType = "text" | "link" | "emoji";
 
@@ -68,6 +69,37 @@ export interface AuthResult {
   workspaceUrl: string;
   userId: string;
   currentUserAvatarUri?: string;
+}
+
+/** `GET /api/me`: the signed-in user plus the board channel prefix the server syncs. */
+export interface MeResult extends AuthResult {
+  channelPrefix: string;
+}
+
+/** Server URL and API key saved by the Tauri shell. */
+export interface ServerSettings {
+  serverUrl: string;
+  apiKey: string;
+}
+
+export interface ChannelSyncStatus {
+  channelId: string;
+  /** `prefix`, `custom`, or null when the channel is no longer a target. */
+  source: "prefix" | "custom" | null;
+  lastMessageTs: string | null;
+  /** Unix seconds. */
+  lastSyncedAt: number | null;
+  lastError: string | null;
+}
+
+/** `GET /api/sync/status` (times are Unix seconds). */
+export interface SyncStatus {
+  running: boolean;
+  lastStartedAt: number | null;
+  lastFinishedAt: number | null;
+  lastCatalogAt: number | null;
+  channelPrefix: string;
+  channels: ChannelSyncStatus[];
 }
 
 export type BoardFilter = "All" | "JoinedOnly" | "NotJoinedOnly" | "CustomOnly";

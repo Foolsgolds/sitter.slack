@@ -1,6 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { listAllChannels, postMessage, refreshChannel } from "../api/commands";
-import { useChannelsStore } from "../store/channelsStore";
+import { listAllChannels, postMessage } from "../api/client";
 import { useUiStore } from "../store/uiStore";
 import type { ChannelSummary } from "../types/models";
 
@@ -30,7 +29,6 @@ export function MessagePopup() {
   const [channels, setChannels] = useState<ChannelSummary[]>([]);
   const [status, setStatus] = useState<PostStatus>(null);
   const setOpenPopup = useUiStore((s) => s.setOpenPopup);
-  const upsertOne = useChannelsStore((s) => s.upsertOne);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,16 +59,8 @@ export function MessagePopup() {
       await postMessage(name, body);
       saveLastChannel(name);
 
-      // Show the new post right away if that channel is on a board.
-      const posted = Array.from(useChannelsStore.getState().channels.values()).find(
-        (channel) => channel.name.toLowerCase() === name.toLowerCase(),
-      );
-      if (posted) {
-        refreshChannel(posted.channelId)
-          .then(upsertOne)
-          .catch(() => {});
-      }
-
+      // The server pulls the new post in from Slack in the background; the
+      // board updates when its channel-updated event arrives.
       setBody("");
       setStatus(null);
       setOpenPopup(null);

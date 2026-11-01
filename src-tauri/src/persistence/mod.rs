@@ -1,2 +1,2 @@
 pub mod boards;
-pub mod token;
+pub mod server_settings;

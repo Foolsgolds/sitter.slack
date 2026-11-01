@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getUserProfile } from "../api/commands";
+import { getUserProfile } from "../api/client";
 import { useUiStore } from "../store/uiStore";
 import type { SlackUserProfileInfo } from "../types/models";
 

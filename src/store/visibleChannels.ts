@@ -1,17 +1,18 @@
-import { CHANNEL_NAME_PREFIX } from "../constants";
 import type { BoardFilter, ChannelWithMessages, CustomBoardDefinition } from "../types/models";
 import { sortChannels } from "./channelsStore";
 
 /**
  * Channels shown for the active filter. The standard filters only cover the
- * "times*" channels (the store may also hold other channels loaded for custom
- * boards); a custom board shows exactly its channels, in the order chosen.
+ * channels named with `channelPrefix` (the server's `channel_prefix`, from
+ * `/api/me`); the store may also hold other channels loaded for custom boards.
+ * A custom board shows exactly its channels, in the order chosen.
  */
 export function selectVisibleChannels(
   channels: Map<string, ChannelWithMessages>,
   filter: BoardFilter,
   customBoards: CustomBoardDefinition[],
   activeCustomBoardIndex: number,
+  channelPrefix: string,
 ): ChannelWithMessages[] {
   if (filter === "CustomOnly") {
     const board = customBoards[activeCustomBoardIndex];
@@ -23,7 +24,7 @@ export function selectVisibleChannels(
   }
 
   const boardChannels = Array.from(channels.values()).filter((channel) =>
-    channel.name.startsWith(CHANNEL_NAME_PREFIX),
+    channel.name.startsWith(channelPrefix),
   );
   switch (filter) {
     case "JoinedOnly":

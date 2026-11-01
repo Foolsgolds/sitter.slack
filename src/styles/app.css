@@ -639,3 +639,33 @@ body {
   white-space: pre;
   user-select: text;
 }
+
+.log-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.log-tab {
+  padding: 2px 12px;
+  border-radius: 12px;
+  border: 1px solid #c8ccd0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.log-tab--selected {
+  background: #4a154b;
+  border-color: #4a154b;
+  color: #fff;
+}
+
+.startup-splash__note {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 420px;
+  text-align: center;
+}

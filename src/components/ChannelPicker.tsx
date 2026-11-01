@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { listAllChannels } from "../api/commands";
+import { listAllChannels } from "../api/client";
 import type { ChannelSummary } from "../types/models";
 
 interface Props {
