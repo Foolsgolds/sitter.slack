@@ -17,7 +17,7 @@ npm run tauri dev
 - 初回のビルドには数分かかる。以降は変更が自動で反映される (Rust は再ビルド、画面は HMR)
 - Node.js は 20.19 以上が必要 (`package.json` の Volta 設定で 24.15.0 に固定)
 - 起動時にポート 1420 (Vite) が使用中だと `tauri dev` は失敗する。前回の Vite が残っていないか確認する
-- Rust のテスト: `cd src-tauri && cargo test`
+- Rust のテスト: `cargo test` (リポジトリ直下。ワークスペース全体)
 - 型チェック: `npx tsc --noEmit`
 
 構成と各文書へのリンクは [README.md](README.md) を参照してください。

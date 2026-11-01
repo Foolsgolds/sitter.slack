@@ -1,7 +1,7 @@
 # Models ドキュメント
 
 表示用モデルの一覧です。
-Rust (`src-tauri/src/slack/models.rs`) が正で、TypeScript (`src/types/models.ts`) はそれに合わせた型です。
+Rust (`crates/core/src/slack/models.rs`) が正で、TypeScript (`src/types/models.ts`) はそれに合わせた型です。
 Rust 側は `serde` の `rename_all = "camelCase"` で JSON にしているため、フィールド名は TypeScript と同じ camelCase になります。
 2 つのファイルは今のところ手で同期しています。
 

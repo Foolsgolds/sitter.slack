@@ -3807,13 +3807,11 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "futures",
- "html-escape",
  "keyring",
- "once_cell",
- "regex",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "slacksitter-core",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
@@ -3822,6 +3820,21 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "slacksitter-core"
+version = "0.1.0"
+dependencies = [
+ "html-escape",
+ "once_cell",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
  "url",
 ]
 
