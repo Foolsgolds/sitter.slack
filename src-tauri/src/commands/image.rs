@@ -6,8 +6,8 @@
 use base64::Engine;
 use tauri::State;
 
-use crate::error::{AppError, AppResult};
-use crate::slack::client::SlackClient;
+use slacksitter_core::error::{AppError, AppResult};
+use slacksitter_core::slack::client::SlackClient;
 use crate::state::AppState;
 
 const MAX_REDIRECTS: u32 = 5;

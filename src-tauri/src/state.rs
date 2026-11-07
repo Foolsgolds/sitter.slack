@@ -3,8 +3,8 @@ use std::sync::RwLock;
 
 use tokio::sync::Semaphore;
 
-use crate::slack::client::SlackClient;
-use crate::slack::models::ChannelSummary;
+use slacksitter_core::slack::client::SlackClient;
+use slacksitter_core::slack::models::ChannelSummary;
 
 /// Max concurrent full-size inline image downloads triggered by `fetch_image`.
 const MAX_CONCURRENT_INLINE_IMAGE_LOADS: usize = 2;

@@ -111,3 +111,6 @@ node_modules/
 dist/
 dist-ssr/
 *.local
+
+# Cargo workspace build output
+/target/

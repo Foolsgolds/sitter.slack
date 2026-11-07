@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::error::{AppError, AppResult};
+use slacksitter_core::error::{AppError, AppResult};
 
 const FILE_NAME: &str = "custom-board.json";
 const DEFAULT_BOARD_NAME: &str = "カスタムボード";

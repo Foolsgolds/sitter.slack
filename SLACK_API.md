@@ -1,16 +1,16 @@
 # Slack API 利用一覧
 
 本プロジェクト（SlackSitter）で利用している Slack API の一覧です。
-API 呼び出しはすべて Rust 側 (`src-tauri/src/slack/`) に集約されています。
+API 呼び出しはすべて Rust 側 (`crates/core/src/slack/`) に集約されています。
 フロントエンドは Slack API を直接呼びません。
 
 ## 構成
 
 | ファイル | 役割 |
 |----------|------|
-| `slack/client.rs` | `reqwest` による HTTP クライアント。Bearer トークンの付与、429 / `ok: false` の判定、リトライ |
-| `slack/endpoints.rs` | 各 API のラッパー (`SlackClient` のメソッド) |
-| `slack/dto.rs` | Slack の応答 JSON を受ける型 |
+| `crates/core/src/slack/client.rs` | `reqwest` による HTTP クライアント。Bearer トークンの付与、429 / `ok: false` の判定、リトライ |
+| `crates/core/src/slack/endpoints.rs` | 各 API のラッパー (`SlackClient` のメソッド) |
+| `crates/core/src/slack/dto.rs` | Slack の応答 JSON を受ける型 |
 
 呼び出しの入口になる Tauri コマンドは `src-tauri/src/commands/` にあります。
 

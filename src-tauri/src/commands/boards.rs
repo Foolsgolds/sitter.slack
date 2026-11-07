@@ -1,6 +1,6 @@
 use tauri::AppHandle;
 
-use crate::error::AppResult;
+use slacksitter_core::error::AppResult;
 use crate::persistence::boards::{self, CustomBoardState};
 
 #[tauri::command]

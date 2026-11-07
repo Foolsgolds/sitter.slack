@@ -1,9 +1,9 @@
 use tauri::State;
 
-use crate::error::AppResult;
+use slacksitter_core::error::AppResult;
 use crate::persistence::token;
-use crate::slack::client::SlackClient;
-use crate::slack::models::AuthResult;
+use slacksitter_core::slack::client::SlackClient;
+use slacksitter_core::slack::models::AuthResult;
 use crate::state::AppState;
 
 async fn authenticate_inner(state: &AppState, token_value: String) -> AppResult<AuthResult> {

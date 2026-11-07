@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::error::{AppError, AppResult};
+use slacksitter_core::error::{AppError, AppResult};
 use crate::state::AppState;
 
 /// Resolves the target channel by name (case-insensitive) against the full

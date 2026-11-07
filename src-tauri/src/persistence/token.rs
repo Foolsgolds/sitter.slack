@@ -5,7 +5,7 @@
 
 use keyring::Entry;
 
-use crate::error::{AppError, AppResult};
+use slacksitter_core::error::{AppError, AppResult};
 
 const SERVICE: &str = "SlackSitter";
 const USERNAME: &str = "slack_access_token";

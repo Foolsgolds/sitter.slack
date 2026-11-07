@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::error::{AppError, AppResult};
+use slacksitter_core::error::{AppError, AppResult};
 use crate::state::AppState;
 
 /// Checks whether the current user has already reacted before deciding
