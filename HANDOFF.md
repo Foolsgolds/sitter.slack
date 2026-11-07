@@ -34,6 +34,9 @@ npm run tauri dev
 
 ## 既知の注意点
 
+- 同期 (`crates/core/src/sync/`) が読むのは、各チャンネルの最新 `history_limit` 件 (既定 15) と、そこに追加された新着だけ。それより古いメッセージのリアクション、編集、削除は DB に反映されない。削除されたメッセージは DB に残る
+- スレッドの返信 (`conversations.replies`) が 1 つでも取れないと、そのチャンネルの同期全体が失敗する (同じ回に取れた新着も書かない。一貫性を優先している)。取れない状態が続くと、そのチャンネルは更新されなくなる。原因は `sync_state.last_error` に残る
+- `thread_broadcast` の返信 (スレッドからチャンネルにも投稿したもの) は、チャンネルの一覧にも親メッセージの下にも出る
 - Rust の表示用モデルと `src/types/models.ts` は手で同期している。片方を変えたらもう片方も変える
 - 「`times` で始まる」という条件が Rust (`commands/channels.rs`) と TypeScript (`src/constants.ts`) の両方にある。変えるときは両方を変える
 - `refresh_channel` と `load_channels` はカタログからチャンネルを作るため、トピック、説明、メンバー数が入らない
