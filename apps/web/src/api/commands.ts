@@ -1,5 +1,5 @@
 // Thin typed wrappers over Tauri's invoke() — one function per command in
-// src-tauri/src/commands/. The Tauri shell only keeps local state now (server
+// apps/desktop/src-tauri/src/commands/. The Tauri shell only keeps local state now (server
 // connection, custom boards, the UI log); everything about Slack goes through
 // the server (see client.ts). Rust snake_case parameter names are matched to
 // camelCase keys automatically by Tauri.

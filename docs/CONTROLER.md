@@ -87,7 +87,7 @@ Slackアカウントの管理
 
 ## 実装の現状 (Tauri 版)
 
-実装は `src/components/MainControllerView.tsx` にあります。
+実装は `apps/web/src/components/MainControllerView.tsx` にあります。
 吹き出しは `BubbleButton` (`@floating-ui/react`) が表示します。
 吹き出しは円 UI の中心に合わせて表示し、ウインドウの端からはみ出す場合は横にずらします。
 ずらしても、矢印は円 UI を指します。

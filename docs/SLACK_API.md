@@ -1,19 +1,19 @@
 # Slack API 利用一覧
 
 本プロジェクト（SlackSitter）で利用している Slack API の一覧です。
-API 呼び出しはすべてサーバー (`slacksitter-server`、[SERVER.md](SERVER.md)) が行い、実装は `crates/core/src/slack/` に集約されています。
+API 呼び出しはすべてサーバー (`slacksitter-server`、[SERVER.md](SERVER.md)) が行い、実装は `server/core/src/slack/` に集約されています。
 デスクトップアプリ (Tauri + React) は Slack API を直接呼びません。サーバーの Web API だけを呼びます。
 
 ## 構成
 
 | ファイル | 役割 |
 |----------|------|
-| `crates/core/src/slack/client.rs` | `reqwest` による HTTP クライアント。Bearer トークンの付与、429 / `ok: false` の判定、リトライ |
-| `crates/core/src/slack/endpoints.rs` | 各 API のラッパー (`SlackClient` のメソッド) |
-| `crates/core/src/slack/dto.rs` | Slack の応答 JSON を受ける型 |
+| `server/core/src/slack/client.rs` | `reqwest` による HTTP クライアント。Bearer トークンの付与、429 / `ok: false` の判定、リトライ |
+| `server/core/src/slack/endpoints.rs` | 各 API のラッパー (`SlackClient` のメソッド) |
+| `server/core/src/slack/dto.rs` | Slack の応答 JSON を受ける型 |
 
-呼び出しの入口は、サーバーの起動処理 (`crates/server/src/lib.rs`)、同期ワーカー (`crates/core/src/sync/`)、Web API のハンドラー (`crates/server/src/routes.rs`) です。
-以前は `src-tauri/src/commands/` の Tauri コマンドが直接呼んでいましたが、サーバーへ移しました。
+呼び出しの入口は、サーバーの起動処理 (`server/api/src/lib.rs`)、同期ワーカー (`server/core/src/sync/`)、Web API のハンドラー (`server/api/src/routes.rs`) です。
+以前は `apps/desktop/src-tauri/src/commands/` の Tauri コマンドが直接呼んでいましたが、サーバーへ移しました。
 
 ## API 一覧
 
@@ -97,7 +97,7 @@ API 呼び出しはすべてサーバー (`slacksitter-server`、[SERVER.md](SER
 ### 画像の取得 (Slack Web API 以外)
 
 Slack 内のプライベート画像 (`files.slack.com` など) は Bearer トークンが必要です。
-サーバーの `GET /api/images?url=` (`crates/server/src/images.rs`) が取得してバイト列を返し、フロントエンドは `fetch` で受けて object URL にします。
+サーバーの `GET /api/images?url=` (`server/api/src/images.rs`) が取得してバイト列を返し、フロントエンドは `fetch` で受けて object URL にします。
 リダイレクトは最大 5 回までで、`https://*.slack.com` へのリクエストにだけトークンを付けます (リダイレクトのたびに確認します)。
 同時に取得するのは 2 件までです。
 アバター画像は公開 URL なので、フロントエンドが `<img>` で直接読み込みます。
@@ -142,7 +142,7 @@ Slack 内のプライベート画像 (`files.slack.com` など) は Bearer ト�
 
 ## 同期ワーカーからの呼び出し (SQLite への蓄積)
 
-`crates/core/src/sync/` の `SyncService` / `SyncScheduler` は、Slack の情報を SQLite に蓄積します。
+`server/core/src/sync/` の `SyncService` / `SyncScheduler` は、Slack の情報を SQLite に蓄積します。
 Tauri のコマンド (上の表) とは別の経路で、現時点では `core` の中で完結しています (サーバー化は Phase 3 以降)。
 同期ワーカーは `SlackApi` トレイトを通して Slack を呼びます (`SlackClient` が実装し、テストでは差し替えます)。
 すべての呼び出しは `with_retry` を通り、429 の `Retry-After` を守ります。
@@ -177,7 +177,7 @@ Tauri のコマンド (上の表) とは別の経路で、現時点では `core`
 メッセージと返信の書き込みは 1 つのトランザクションで行い、返信の取得に失敗した親メッセージが「最新」に見えてしまうことを防いでいます。
 `conversations.list` の途中で失敗したときは、チャンネルのアーカイブ判定を行いません。
 
-### サーバー (`crates/server`) が呼ぶ Slack API
+### サーバー (`server/api`) が呼ぶ Slack API
 
 `slacksitter-server` は、上の同期ワーカーに加えて、API の要求に応じて次を呼びます。
 詳しくは [SERVER.md](SERVER.md) を参照してください。

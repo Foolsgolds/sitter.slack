@@ -1,4 +1,4 @@
-// Mirrors the Rust display models in crates/core/src/slack/models.rs
+// Mirrors the Rust display models in server/core/src/slack/models.rs
 // (serde `rename_all = "camelCase"`), which the server returns as JSON.
 // Keep in sync by hand.
 

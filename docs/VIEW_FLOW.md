@@ -9,16 +9,16 @@ Slack との通信と DB はサーバー (`slacksitter-server`、[SERVER.md](SER
 Slack Web API
    ▲  (reqwest)
 slacksitter-server ── 同期ワーカー ──▶ SQLite ──▶ REST API / SSE
-(crates/server + crates/core: slack/ db/ sync/)         ▲   │ HTTP (Bearer API キー)
+(server/api + server/core: slack/ db/ sync/)         ▲   │ HTTP (Bearer API キー)
                                                         │   ▼
-Tauri シェル (src-tauri): 接続設定 (URL と API キー)、カスタムボード、UI のログ
+Tauri シェル (apps/desktop/src-tauri): 接続設定 (URL と API キー)、カスタムボード、UI のログ
 React: api/client.ts ── actions/ ── store/ (zustand) ── components/
 ```
 
-- Slack API の呼び出し、メッセージ本文の解析、画像 URL の抽出はすべてサーバー側 (`crates/core`) で行う。
+- Slack API の呼び出し、メッセージ本文の解析、画像 URL の抽出はすべてサーバー側 (`server/core`) で行う。
 - サーバーは画面にそのまま描ける「表示用モデル」(`ChannelWithMessages`) を JSON で返す。
 - フロントエンドは `fetch` でサーバーを呼び、zustand のストアに入れて描画するだけで、Slack の生データは扱わない。
-- Tauri の Rust 側 (`src-tauri`) は Slack に触らない。サーバーの URL と API キー、カスタムボード、UI のログだけを持つ。
+- Tauri の Rust 側 (`apps/desktop/src-tauri`) は Slack に触らない。サーバーの URL と API キー、カスタムボード、UI のログだけを持つ。
 
 ## 2. データ取得のトリガー
 
@@ -65,7 +65,7 @@ Slack を見に行くのはサーバーの同期ワーカー (既定で 1 分に
 
 ## 4. 表示用モデルへの変換 (Rust)
 
-`crates/core/src/slack/models.rs` の `build_message_display_item` が、Slack のメッセージ 1 件を `MessageDisplayItem` に変える。
+`server/core/src/slack/models.rs` の `build_message_display_item` が、Slack のメッセージ 1 件を `MessageDisplayItem` に変える。
 サーバーは DB に保存した `raw_json` からこの変換を行います。
 
 | 処理 | 担当 |
@@ -171,17 +171,17 @@ SSE は `fetch` のストリームで読みます (`EventSource` はヘッダー
 
 | ファイル | 役割 |
 |----------|------|
-| `crates/server/src/routes.rs` | REST と SSE のエンドポイント |
-| `crates/core/src/sync/` | Slack から SQLite への同期とスケジューラー |
-| `crates/core/src/db/view.rs` | DB から表示用モデルを組み立てる |
-| `crates/core/src/slack/models.rs` | 表示用モデルと変換 |
-| `crates/core/src/slack/parser.rs` | 本文の解析 |
-| `src-tauri/src/commands/server_settings.rs` | サーバーの URL と API キーの保存 (API キーは資格情報ストア) |
-| `src-tauri/src/commands/boards.rs` | カスタムボードの読み書き |
-| `src/api/client.ts` | サーバーの REST を呼ぶ `fetch` ラッパー、画像の取得 |
-| `src/api/events.ts`、`src/api/sse.ts` | SSE の購読 (`fetch` のストリーム、再接続、パーサー) |
-| `src/App.tsx` | 起動、接続、表示チャンネルの選択 |
-| `src/actions/session.ts` | 全体の読み込み、更新ボタン、SSE の処理、ポーリング、接続の解除 |
-| `src/actions/boards.ts` | カスタムボードの追加・変更・削除・選択、同期対象の更新 |
-| `src/store/visibleChannels.ts` | フィルターごとの表示対象 |
-| `src/components/ChannelBoardView.tsx` | チャンネル列の仮想化 |
+| `server/api/src/routes.rs` | REST と SSE のエンドポイント |
+| `server/core/src/sync/` | Slack から SQLite への同期とスケジューラー |
+| `server/core/src/db/view.rs` | DB から表示用モデルを組み立てる |
+| `server/core/src/slack/models.rs` | 表示用モデルと変換 |
+| `server/core/src/slack/parser.rs` | 本文の解析 |
+| `apps/desktop/src-tauri/src/commands/server_settings.rs` | サーバーの URL と API キーの保存 (API キーは資格情報ストア) |
+| `apps/desktop/src-tauri/src/commands/boards.rs` | カスタムボードの読み書き |
+| `apps/web/src/api/client.ts` | サーバーの REST を呼ぶ `fetch` ラッパー、画像の取得 |
+| `apps/web/src/api/events.ts`、`apps/web/src/api/sse.ts` | SSE の購読 (`fetch` のストリーム、再接続、パーサー) |
+| `apps/web/src/App.tsx` | 起動、接続、表示チャンネルの選択 |
+| `apps/web/src/actions/session.ts` | 全体の読み込み、更新ボタン、SSE の処理、ポーリング、接続の解除 |
+| `apps/web/src/actions/boards.ts` | カスタムボードの追加・変更・削除・選択、同期対象の更新 |
+| `apps/web/src/store/visibleChannels.ts` | フィルターごとの表示対象 |
+| `apps/web/src/components/ChannelBoardView.tsx` | チャンネル列の仮想化 |
