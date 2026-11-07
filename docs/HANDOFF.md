@@ -74,6 +74,7 @@ npm run dev:desktop
 - 本文の解析の改善 (閉じていない `*` の扱いなど)
 - `apps/web/src/types/models.ts` を Rust から自動生成する
 - 古いメッセージの変更 (リアクションの追加、削除) を DB に反映する仕組み
+- `apps/web/index.html` が favicon として `/vite.svg` を参照しているが、`public/` が git に入っていないので 404 になる (以前からの状態)。ファイルを足すか、参照を外す
 
 ## 補足
 

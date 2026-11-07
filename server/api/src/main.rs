@@ -16,7 +16,7 @@ OPTIONS:
     -V, --version     Show the version
 
 The Slack token and the API key can also come from SLACKSITTER__SLACK__TOKEN and
-SLACKSITTER__SERVER__API_KEY. See SERVER.md for every setting.";
+SLACKSITTER__SERVER__API_KEY. See docs/SERVER.md for every setting.";
 
 enum Args {
     Run { config_path: Option<PathBuf> },
@@ -66,7 +66,7 @@ async fn main() -> ExitCode {
             eprintln!("slacksitter-server: {err}");
             eprintln!(
                 "(settings file: --config <path>, ${CONFIG_PATH_ENV}, or ./{DEFAULT_CONFIG_PATH}; \
-                 see slacksitter.example.toml)"
+                 see server/slacksitter.example.toml)"
             );
             return ExitCode::from(2);
         }
