@@ -2,6 +2,8 @@
 //! one catalog / one channel; `SyncScheduler` walks the targets on a timer.
 
 use std::cmp::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,6 +24,7 @@ pub mod scheduler;
 mod tests;
 
 pub use scheduler::{CycleError, CycleSummary, SyncScheduler, SyncStatus};
+
 
 #[derive(Debug, Clone)]
 pub struct SyncConfig {
@@ -55,17 +58,47 @@ impl Default for SyncConfig {
     }
 }
 
+/// Who started a batch of syncs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncKind {
+    /// The scheduler's own rounds.
+    Scheduler,
+    /// Someone asked for it (the API's "sync now" calls).
+    Manual,
+}
+
+impl SyncKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SyncKind::Scheduler => "scheduler",
+            SyncKind::Manual => "manual",
+        }
+    }
+}
+
+/// An id for one batch of syncs, unique within this process and across restarts.
+pub fn new_batch_id() -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("{millis:x}-{}", NEXT.fetch_add(1, AtomicOrdering::Relaxed))
+}
+
 /// Progress notifications (the server turns these into SSE events).
+/// `Started` / `Progress` / `Completed` carry the id and kind of their batch, so a
+/// client can tell the sync it asked for from the scheduler's rounds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncEvent {
-    /// A pass over `total` targets began.
-    Started { total: usize },
-    /// `done` of `total` targets have been tried.
-    Progress { done: usize, total: usize },
+    /// A batch over `total` channels began.
+    Started { batch_id: String, kind: SyncKind, total: usize },
+    /// `done` of `total` channels have been tried.
+    Progress { batch_id: String, kind: SyncKind, done: usize, total: usize },
     /// New or changed messages for this channel are now in the database.
     ChannelUpdated { channel_id: String },
-    /// The pass ended; `failed` targets could not be synced.
-    Completed { failed: usize },
+    /// The batch ended; `failed` channels could not be synced.
+    Completed { batch_id: String, kind: SyncKind, failed: usize },
     /// A catalog or channel sync failed (the message never contains a token).
     Error { message: String },
 }
@@ -344,6 +377,58 @@ impl<A: SlackApi> SyncService<A> {
         Ok(outcome)
     }
 
+    /// Re-reads the one message with this `ts` and stores it (a reaction was toggled, say).
+    /// Returns whether the message still exists.
+    pub async fn refresh_message(&self, channel_id: &str, ts: &str) -> AppResult<bool> {
+        let Some(message) = self.api.message_at(channel_id, ts).await? else {
+            return Ok(false);
+        };
+        let mut conn = self.pool.acquire().await?;
+        let changed = store::upsert_message(&mut conn, channel_id, &message, now_unix()).await?;
+        drop(conn);
+        if changed {
+            self.emit(SyncEvent::ChannelUpdated {
+                channel_id: channel_id.to_string(),
+            });
+        }
+        Ok(true)
+    }
+
+    /// Adds the reaction when `user_id` has not reacted with `name` yet, removes it
+    /// otherwise (the live message decides, not a blind toggle), then refreshes the
+    /// stored message. Returns whether the user now has the reaction.
+    pub async fn toggle_reaction(&self, channel_id: &str, ts: &str, name: &str, user_id: &str) -> AppResult<bool> {
+        let message = self
+            .api
+            .message_at(channel_id, ts)
+            .await?
+            .ok_or_else(|| AppError::Slack("message_not_found".to_string()))?;
+        let reacted = user_has_reacted(&message, name, user_id);
+        if reacted {
+            self.api.remove_reaction(channel_id, ts, name).await?;
+        } else {
+            self.api.add_reaction(channel_id, ts, name).await?;
+        }
+        if let Err(err) = self.refresh_message(channel_id, ts).await {
+            tracing::warn!(%channel_id, %ts, "message refresh after reaction failed: {err}");
+        }
+        Ok(!reacted)
+    }
+
+    /// Posts `text` to the channel called `channel_name` (case-insensitive, resolved
+    /// against the stored catalog). Returns the channel id.
+    pub async fn post_message(&self, channel_name: &str, text: &str) -> AppResult<String> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(AppError::Slack("message text must not be empty".to_string()));
+        }
+        let channel_id = store::channel_id_by_name(&self.pool, channel_name.trim())
+            .await?
+            .ok_or_else(|| AppError::Slack(format!("channel not found: {channel_name}")))?;
+        self.api.post_message(&channel_id, text).await?;
+        Ok(channel_id)
+    }
+
     /// `users.info` for one user, stored regardless of how fresh the stored copy is.
     pub async fn fetch_user(&self, user_id: &str) -> AppResult<()> {
         let user = self.api.user_info(user_id).await?;
@@ -355,6 +440,24 @@ async fn wait_for(pacer: Option<&Pacer>) {
     if let Some(pacer) = pacer {
         pacer.wait().await;
     }
+}
+
+/// Whether `user_id` is among the users of the reaction called `name` on this raw message.
+pub fn user_has_reacted(message: &Value, name: &str, user_id: &str) -> bool {
+    message
+        .get("reactions")
+        .and_then(Value::as_array)
+        .map(|reactions| {
+            reactions.iter().any(|reaction| {
+                reaction.get("name").and_then(Value::as_str) == Some(name)
+                    && reaction
+                        .get("users")
+                        .and_then(Value::as_array)
+                        .map(|users| users.iter().any(|u| u.as_str() == Some(user_id)))
+                        .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn raw_ts(message: &Value) -> Option<&str> {

@@ -1,0 +1,37 @@
+[package]
+name = "slacksitter-server"
+version = "0.1.0"
+description = "SlackSitter server: syncs Slack into SQLite and serves it over a Web API"
+authors = ["yanqirenshi"]
+edition = "2021"
+
+[lib]
+name = "slacksitter_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "slacksitter-server"
+path = "src/main.rs"
+
+[dependencies]
+slacksitter-core = { path = "../core" }
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "net"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+figment = { version = "0.10", features = ["toml", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+subtle = "2"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+url = "2"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+figment = { version = "0.10", features = ["toml", "env", "test"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "net", "test-util"] }

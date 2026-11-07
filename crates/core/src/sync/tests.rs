@@ -140,6 +140,64 @@ impl SlackApi for FakeSlack {
                 .ok_or_else(|| AppError::Slack("user_not_found".to_string()))
         })
     }
+
+    async fn post_message(&self, channel_id: &str, text: &str) -> AppResult<()> {
+        self.with(|s| {
+            s.calls.push(format!("chat.postMessage {channel_id} {text}"));
+            Ok(())
+        })
+    }
+
+    async fn add_reaction(&self, channel_id: &str, ts: &str, name: &str) -> AppResult<()> {
+        self.with(|s| {
+            s.calls.push(format!("reactions.add {channel_id} {ts} {name}"));
+            edit_reaction(s, channel_id, ts, name, true);
+            Ok(())
+        })
+    }
+
+    async fn remove_reaction(&self, channel_id: &str, ts: &str, name: &str) -> AppResult<()> {
+        self.with(|s| {
+            s.calls.push(format!("reactions.remove {channel_id} {ts} {name}"));
+            edit_reaction(s, channel_id, ts, name, false);
+            Ok(())
+        })
+    }
+
+    async fn message_at(&self, channel_id: &str, ts: &str) -> AppResult<Option<Value>> {
+        self.with(|s| {
+            s.calls.push(format!("conversations.history-one {channel_id} {ts}"));
+            Ok(s.history
+                .get(channel_id)
+                .and_then(|list| list.iter().find(|m| m["ts"] == ts))
+                .cloned())
+        })
+    }
+}
+
+/// Adds or removes the reaction of user U1 (the signed-in user in these tests).
+fn edit_reaction(s: &mut FakeState, channel_id: &str, ts: &str, name: &str, add: bool) {
+    let Some(message) = s.history.get_mut(channel_id).and_then(|l| l.iter_mut().find(|m| m["ts"] == ts)) else {
+        return;
+    };
+    let mut reactions: Vec<Value> = message["reactions"].as_array().cloned().unwrap_or_default();
+    reactions.retain_mut(|r| {
+        if r["name"] != name {
+            return true;
+        }
+        let mut users: Vec<Value> = r["users"].as_array().cloned().unwrap_or_default();
+        users.retain(|u| u != "U1");
+        if add {
+            users.push(json!("U1"));
+        }
+        r["count"] = json!(users.len());
+        r["users"] = json!(users);
+        !users.is_empty()
+    });
+    if add && !reactions.iter().any(|r| r["name"] == name) {
+        reactions.push(json!({ "name": name, "count": 1, "users": ["U1"] }));
+    }
+    message["reactions"] = json!(reactions);
 }
 
 // --------------------------------------------------------------------- helpers
@@ -547,8 +605,8 @@ async fn a_cycle_syncs_every_target_and_reports_progress() {
     let scheduler = SyncScheduler::new(fx.service.clone());
     let mut events = fx.service.subscribe();
 
-    let summary = scheduler.run_cycle(false).await.unwrap();
-    assert_eq!(summary, CycleSummary { total: 2, failed: 0 });
+    let summary = scheduler.run_cycle(false, SyncKind::Manual).await.unwrap();
+    assert_eq!((summary.total, summary.failed), (2, 0));
     assert!(!scheduler.status().running);
     assert!(scheduler.status().last_finished_at.is_some());
 
@@ -556,8 +614,27 @@ async fn a_cycle_syncs_every_target_and_reports_progress() {
     while let Ok(event) = events.try_recv() {
         seen.push(event);
     }
-    assert_eq!(seen.first(), Some(&SyncEvent::Started { total: 2 }));
-    assert_eq!(seen.last(), Some(&SyncEvent::Completed { failed: 0 }));
+    // Every event of the batch carries the batch's id and kind.
+    let batch_id = summary.batch_id.clone();
+    assert_eq!(
+        seen.first(),
+        Some(&SyncEvent::Started { batch_id: batch_id.clone(), kind: SyncKind::Manual, total: 2 })
+    );
+    assert_eq!(
+        seen.last(),
+        Some(&SyncEvent::Completed { batch_id: batch_id.clone(), kind: SyncKind::Manual, failed: 0 })
+    );
+    let progress: Vec<_> = seen
+        .iter()
+        .filter_map(|e| match e {
+            SyncEvent::Progress { batch_id: id, kind, done, .. } => Some((id.clone(), *kind, *done)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        progress,
+        [(batch_id.clone(), SyncKind::Manual, 1), (batch_id, SyncKind::Manual, 2)]
+    );
     let updated: Vec<_> = seen
         .iter()
         .filter_map(|e| match e {
@@ -575,8 +652,8 @@ async fn a_failing_channel_does_not_stop_the_cycle() {
     let scheduler = SyncScheduler::new(fx.service.clone());
     // C1 is not synced because history fails for everyone...
     fx.fake.with(|s| s.fail_history = Some("boom".into()));
-    let summary = scheduler.run_cycle(false).await.unwrap();
-    assert_eq!(summary, CycleSummary { total: 2, failed: 2 });
+    let summary = scheduler.run_cycle(false, SyncKind::Scheduler).await.unwrap();
+    assert_eq!((summary.total, summary.failed), (2, 2));
     // ...and both were still attempted.
     assert_eq!(fx.fake.calls("conversations.history").len(), 2);
 }
@@ -598,9 +675,9 @@ async fn a_second_cycle_is_refused_while_one_is_running_and_calls_are_spaced() {
     let scheduler = SyncScheduler::new(service);
     let started = tokio::time::Instant::now();
 
-    let (first, second) = tokio::join!(scheduler.run_cycle(true), async {
+    let (first, second) = tokio::join!(scheduler.run_cycle(true, SyncKind::Manual), async {
         tokio::task::yield_now().await;
-        scheduler.run_cycle(true).await
+        scheduler.run_cycle(true, SyncKind::Manual).await
     });
     assert!(first.is_ok());
     assert!(matches!(second, Err(CycleError::AlreadyRunning)));
@@ -710,4 +787,98 @@ async fn thread_broadcasts_are_listed_in_the_channel_and_under_their_parent() {
     let parent = channel.messages.iter().find(|m| m.ts.as_deref() == Some(ts(2).as_str())).unwrap();
     let replies: Vec<_> = parent.replies.iter().map(|m| m.ts.clone().unwrap()).collect();
     assert_eq!(replies, [ts(3), ts(4)]);
+}
+
+// ------------------------------------------------------------- write helpers
+
+#[tokio::test]
+async fn toggling_a_reaction_adds_then_removes_it_and_keeps_the_database_current() {
+    let fx = fixture(15).await;
+    fx.fake.put_message("C1", message(1, "U2", "hi"));
+    fx.service.sync_channel("C1").await.unwrap();
+
+    assert!(fx.service.toggle_reaction("C1", &ts(1), "tada", "U1").await.unwrap());
+    assert_eq!(fx.fake.calls("reactions.add"), [format!("reactions.add C1 {} tada", ts(1))]);
+    let channel = view::channel_with_messages(&fx.pool, "C1", 10, None).await.unwrap().unwrap();
+    assert_eq!(channel.messages[0].reactions[0].name, "tada");
+
+    assert!(!fx.service.toggle_reaction("C1", &ts(1), "tada", "U1").await.unwrap());
+    assert_eq!(fx.fake.calls("reactions.remove").len(), 1);
+    let channel = view::channel_with_messages(&fx.pool, "C1", 10, None).await.unwrap().unwrap();
+    assert!(channel.messages[0].reactions.is_empty());
+    assert_eq!(count(&fx.pool, "reactions").await, 0);
+}
+
+#[tokio::test]
+async fn toggling_a_reaction_on_a_missing_message_fails() {
+    let fx = fixture(15).await;
+    let err = fx.service.toggle_reaction("C1", &ts(9), "tada", "U1").await.unwrap_err();
+    assert!(err.to_string().contains("message_not_found"));
+    assert!(fx.fake.calls("reactions.").is_empty());
+}
+
+#[tokio::test]
+async fn posting_resolves_the_channel_name_case_insensitively() {
+    let fx = fixture(15).await;
+    let id = fx.service.post_message("TIMES_Alice", "  hello  ").await.unwrap();
+    assert_eq!(id, "C1");
+    assert_eq!(fx.fake.calls("chat.postMessage"), ["chat.postMessage C1 hello"]);
+
+    assert!(fx.service.post_message("nope", "x").await.unwrap_err().to_string().contains("channel not found"));
+    assert!(fx.service.post_message("general", "   ").await.is_err());
+    assert_eq!(fx.fake.calls("chat.postMessage").len(), 1);
+}
+
+#[test]
+fn batch_ids_are_unique_and_kinds_have_wire_names() {
+    let a = new_batch_id();
+    let b = new_batch_id();
+    assert_ne!(a, b);
+    assert!(!a.is_empty());
+    assert_eq!(SyncKind::Scheduler.as_str(), "scheduler");
+    assert_eq!(SyncKind::Manual.as_str(), "manual");
+}
+
+#[tokio::test]
+async fn the_loop_marks_its_batches_as_scheduler_rounds() {
+    let fake = Arc::new(FakeSlack::default());
+    fake.add_channel("C1", "times_alice");
+    let pool = db::connect_memory().await.unwrap();
+    let service = SyncService::new(
+        pool,
+        fake,
+        SyncConfig {
+            request_spacing: Duration::ZERO,
+            cycle_interval: Duration::from_millis(30),
+            ..Default::default()
+        },
+    );
+    let mut events = service.subscribe();
+    let scheduler = Arc::new(SyncScheduler::new(service));
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let runner = {
+        let scheduler = scheduler.clone();
+        async move {
+            scheduler
+                .run(async {
+                    let _ = stopped.await;
+                })
+                .await
+        }
+    };
+    let watcher = async {
+        let kind = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if let Ok(SyncEvent::Started { kind, .. }) = events.recv().await {
+                    break kind;
+                }
+            }
+        })
+        .await
+        .expect("a pass starts within 10s");
+        stop.send(()).unwrap();
+        kind
+    };
+    let ((), kind) = tokio::join!(runner, watcher);
+    assert_eq!(kind, SyncKind::Scheduler);
 }

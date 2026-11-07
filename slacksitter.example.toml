@@ -1,0 +1,36 @@
+# SlackSitter サーバーの設定例。
+# コピーして slacksitter.toml にして使います (slacksitter.toml は .gitignore 済みです)。
+# 環境変数でも上書きできます。例: SLACKSITTER__SLACK__TOKEN、SLACKSITTER__SERVER__API_KEY
+# 設定ファイルを使わず、環境変数だけで渡すこともできます。
+
+[server]
+bind = "127.0.0.1:8787"
+# 必須。空、または change-me のままだと起動しません。長いランダムな文字列にしてください。
+api_key = "change-me"
+# ブラウザ (Tauri の WebView) から呼ぶことを許可するオリジン。
+cors_origins = ["tauri://localhost", "http://tauri.localhost", "http://localhost:1420"]
+
+[slack]
+# 必須。User OAuth Token (xoxp-...)。
+token = "xoxp-your-token"
+
+[database]
+path = "./data/slacksitter.db"
+
+[sync]
+# 名前がこの接頭辞で始まるチャンネルを自動で同期対象にする。
+channel_prefix = "times"
+# conversations.history 1 回で取る件数。
+history_limit = 15
+# conversations.history / conversations.replies の呼び出し間隔 (秒)。
+request_spacing_seconds = 60
+# 全チャンネルを 1 周したあとに置く間隔 (秒)。
+cycle_interval_seconds = 300
+# チャンネル一覧と絵文字を取り直す間隔 (秒)。
+catalog_interval_seconds = 3600
+# 1 チャンネルを 1 回同期するときに遡る最大ページ数。
+max_pages_per_channel = 10
+
+[log]
+dir = "./logs"
+level = "info"
