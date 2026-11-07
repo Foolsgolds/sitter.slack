@@ -12,7 +12,7 @@
 サーバーを先に起動します (設定は [SERVER.md](SERVER.md))。
 
 ```powershell
-Copy-Item slacksitter.example.toml slacksitter.toml
+Copy-Item server\slacksitter.example.toml slacksitter.toml
 # slacksitter.toml の slack.token と server.api_key を書き換える
 cargo run -p slacksitter-server -- --config slacksitter.toml
 ```
@@ -21,7 +21,7 @@ cargo run -p slacksitter-server -- --config slacksitter.toml
 
 ```powershell
 npm install
-npm run tauri dev
+npm run dev:desktop
 ```
 
 初回は「サーバー接続」画面で、サーバー URL と `server.api_key` を入力します。
@@ -30,13 +30,13 @@ npm run tauri dev
 - Node.js は 20.19 以上が必要 (`package.json` の Volta 設定で 24.15.0 に固定)
 - 起動時にポート 1420 (Vite) が使用中だと `tauri dev` は失敗する。前回の Vite が残っていないか確認する
 - Rust のテスト: `cargo test` (リポジトリ直下。ワークスペース全体)
-- 型チェック: `npx tsc --noEmit`
+- 型チェック: `npm run typecheck`
 
-構成と各文書へのリンクは [README.md](README.md) を参照してください。
+構成と各文書へのリンクは [README.md](../README.md) を参照してください。
 
 ## 設計上の判断
 
-- Slack との通信と DB (SQLite) は、すべてサーバー (`crates/server`、同期ロジックは `crates/core`) が受け持つ。デスクトップアプリは Slack に触らない
+- Slack との通信と DB (SQLite) は、すべてサーバー (`server/api`、同期ロジックは `server/core`) が受け持つ。デスクトップアプリは Slack に触らない
 - Slack トークンはサーバーの設定ファイル (TOML) か環境変数に置く。デスクトップアプリには持たせず、キーリングにも入れない。アプリが保存するのは、サーバーの URL (JSON) と API キー (OS の資格情報ストア。サービス名 `SlackSitter`、ユーザー名 `server_api_key`) だけ
 - 旧版が資格情報ストアに保存していた Slack トークン (`slack_access_token`) と、旧 WinUI 版の `.env` (平文) は読まない
 - サーバーは当面ローカルで使うが、最初から API キー認証 (`Authorization: Bearer`) を入れている。TLS はサーバー自身では行わず、外部へ公開するときはリバースプロキシに任せる
@@ -56,7 +56,7 @@ npm run tauri dev
 
 ## 既知の注意点
 
-- Rust の表示用モデル (`crates/core/src/slack/models.rs`) と `src/types/models.ts` は手で同期している。片方を変えたらもう片方も変える
+- Rust の表示用モデル (`server/core/src/slack/models.rs`) と `apps/web/src/types/models.ts` は手で同期している。片方を変えたらもう片方も変える
 - スレッドの返信 (`conversations.replies`) が 1 つでも取れないと、そのチャンネルの同期全体が失敗する (同じ回に取れた新着も書かない。一貫性を優先している)。取れない状態が続くと、そのチャンネルは更新されなくなる。原因は `sync_state.last_error` に残る
 - `thread_broadcast` の返信 (スレッドからチャンネルにも投稿したもの) は、チャンネルの一覧にも親メッセージの下にも出る
 - サーバーが同期するのは、各チャンネルの最新 `history_limit` 件と、そこに追加された新着だけ。それより古いメッセージのリアクション、編集、削除は DB に反映されない。削除されたメッセージは DB に残る
@@ -72,8 +72,9 @@ npm run tauri dev
 - フロントエンドの自動テスト (`selectVisibleChannels`、SSE パーサー、`normalize` に相当する処理など)
 - リアクションの新規追加 (今は既存のリアクションのクリックによる追加 / 取り消しだけ)
 - 本文の解析の改善 (閉じていない `*` の扱いなど)
-- `src/types/models.ts` を Rust から自動生成する
+- `apps/web/src/types/models.ts` を Rust から自動生成する
 - 古いメッセージの変更 (リアクションの追加、削除) を DB に反映する仕組み
+- `apps/web/index.html` が favicon として `/vite.svg` を参照しているが、`public/` が git に入っていないので 404 になる (以前からの状態)。ファイルを足すか、参照を外す
 
 ## 補足
 

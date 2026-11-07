@@ -106,7 +106,7 @@ _ReSharper*/
 # Local tool settings
 .claude/settings.local.json
 
-# Node / Vite / Tauri (new stack, see src-tauri/.gitignore for Rust-side ignores)
+# Node / Vite / Tauri (new stack, see apps/desktop/src-tauri/.gitignore for Rust-side ignores)
 node_modules/
 dist/
 dist-ssr/

@@ -32,12 +32,12 @@ Slack のトークンはサーバーだけが持ちます。
 
 ## 技術スタック
 
-- サーバー (Rust、`crates/server`)
+- サーバー (Rust、`server/api`)
   - `axum` (Web API、SSE)、`tokio`、`tower-http` (CORS)、`figment` (設定)
   - `sqlx` + SQLite (蓄積)、`reqwest` (Slack Web API)、`tracing` (ログ)
-- Tauri 2 (Rust、`src-tauri`)
+- Tauri 2 (Rust、`apps/desktop/src-tauri`)
   - `keyring` (API キーの保存)、`tracing` (ログ)、`serde`
-- React 19 + TypeScript + Vite
+- React 19 + TypeScript + Vite (`apps/web`)
   - `zustand` (状態管理)
   - `@tanstack/react-virtual` (チャンネル列の横方向仮想化)
   - `@floating-ui/react` (吹き出しポップアップ)
@@ -48,35 +48,51 @@ Tauri の Rust 側は、接続設定、カスタムボード、UI のログだ�
 
 ## プロジェクト構成
 
-- `Cargo.toml` — Cargo ワークスペース (`crates/core`、`crates/server`、`src-tauri`)
-- `crates/core/` — `slacksitter-core` クレート (Tauri に依存しない)
+Web フロント、デスクトップ シェル、サーバーが最上位で分かれたモノレポです。
+
+```
+sitter.slack/
+├── apps/
+│   ├── web/                     React フロント (Vite)
+│   └── desktop/                 Tauri シェル
+├── server/
+│   ├── core/                    slacksitter-core (Slack クライアント、DB、同期)
+│   ├── api/                     slacksitter-server (axum の Web API)
+│   └── slacksitter.example.toml サーバー設定の例
+├── docs/                        文書
+├── Cargo.toml                   Rust ワークスペース (server/core、server/api、apps/desktop/src-tauri)
+├── package.json                 npm workspaces (apps/web、apps/desktop) と共通スクリプト
+└── README.md
+```
+
+- `apps/web/` — React (フロントエンド。パッケージ名 `@slacksitter/web`)
+  - `src/components/` — 画面部品
+  - `src/store/` — zustand ストア
+  - `src/actions/` — 複数の部品から使う操作 (読み込み、更新ボタン、SSE の処理、接続の解除、ボード操作)
+  - `src/api/` — サーバーの Web API / SSE のクライアント (`client.ts`、`events.ts`) と Tauri コマンドのラッパー (`commands.ts`)
+  - `src/types/models.ts` — Rust の表示用モデルに対応する型
+- `apps/desktop/` — Tauri シェル (パッケージ名 `@slacksitter/desktop`。`@tauri-apps/cli` だけを持つ)
+  - `src-tauri/` — Rust のクレート `slacksitter`
+    - `src/commands/` — フロントエンドから呼ばれる Tauri コマンド (接続設定、カスタムボード、ログ)
+    - `src/persistence/` — サーバー接続設定 (URL は JSON、API キーは資格情報ストア)、カスタムボード (JSON)
+    - `src/logging.rs` — ファイルログ
+- `server/core/` — `slacksitter-core` クレート (Tauri に依存しない)
   - `src/slack/` — Slack API クライアント、リトライ、メッセージ解析、表示用モデル
   - `src/db/` — SQLite への書き込み (`store`)、表示用モデルの組み立て (`view`)。スキーマは `migrations/`
   - `src/sync/` — Slack から SQLite への差分同期 (`SyncService`) と定期巡回 (`SyncScheduler`)
   - `src/error.rs` — 共通のエラー型 `AppError`
-- `crates/server/` — `slacksitter-server` クレート (axum の Web API サーバー。常駐して Slack を巡回し、SQLite に蓄積する)
+- `server/api/` — `slacksitter-server` クレート (axum の Web API サーバー。常駐して Slack を巡回し、SQLite に蓄積する)
   - `src/config.rs` — 設定 (TOML と環境変数)、`src/auth.rs` — API キー認証、`src/routes.rs` — REST と SSE、`src/images.rs` — 画像プロキシ
   - `tests/api.rs` — API の統合テスト
-- `slacksitter.example.toml` — サーバー設定の例
-- `src-tauri/` — Tauri シェル (Rust)
-  - `src/commands/` — フロントエンドから呼ばれる Tauri コマンド (接続設定、カスタムボード、ログ)
-  - `src/persistence/` — サーバー接続設定 (URL は JSON、API キーは資格情報ストア)、カスタムボード (JSON)
-  - `src/logging.rs` — ファイルログ
-- `src/` — React (フロントエンド)
-  - `components/` — 画面部品
-  - `store/` — zustand ストア
-  - `actions/` — 複数の部品から使う操作 (読み込み、更新ボタン、SSE の処理、接続の解除、ボード操作)
-  - `api/` — サーバーの Web API / SSE のクライアント (`client.ts`、`events.ts`) と Tauri コマンドのラッパー (`commands.ts`)
-  - `types/models.ts` — Rust の表示用モデルに対応する型
 
 詳しくは次の文書を参照してください。
 
-- [SERVER.md](SERVER.md) — サーバーの設定、API 一覧、起動方法
-- [MODELS.md](MODELS.md) — 表示用モデル
-- [VIEW_FLOW.md](VIEW_FLOW.md) — データ取得から表示までの流れ
-- [SLACK_API.md](SLACK_API.md) — 利用している Slack API
-- [CONTROLER.md](CONTROLER.md) — 下部コントローラーの仕様
-- [HANDOFF.md](HANDOFF.md) — 引き継ぎメモ
+- [docs/SERVER.md](docs/SERVER.md) — サーバーの設定、API 一覧、起動方法
+- [docs/MODELS.md](docs/MODELS.md) — 表示用モデル
+- [docs/VIEW_FLOW.md](docs/VIEW_FLOW.md) — データ取得から表示までの流れ
+- [docs/SLACK_API.md](docs/SLACK_API.md) — 利用している Slack API
+- [docs/CONTROLER.md](docs/CONTROLER.md) — 下部コントローラーの仕様
+- [docs/HANDOFF.md](docs/HANDOFF.md) — 引き継ぎメモ
 
 ## セットアップ
 
@@ -94,24 +110,27 @@ cd slack.sitter
 npm install
 ```
 
+`npm install` はリポジトリ直下で 1 回実行します (npm workspaces が `apps/web` と `apps/desktop` の依存をまとめて入れます)。
+
 ### 3. サーバーの起動 (先に起動します)
 
 デスクトップアプリはサーバーに接続して動くので、サーバーを先に起動します。
 設定ファイルを作り、Slack のトークンと API キーを書きます。
 
 ```powershell
-Copy-Item slacksitter.example.toml slacksitter.toml
+Copy-Item server\slacksitter.example.toml slacksitter.toml
 # slacksitter.toml の slack.token と server.api_key を書き換える
 cargo run -p slacksitter-server -- --config slacksitter.toml
 ```
 
-設定項目、API 一覧、環境変数での指定は [SERVER.md](SERVER.md) を参照してください。
+設定項目、API 一覧、環境変数での指定は [docs/SERVER.md](docs/SERVER.md) を参照してください。
+サーバーは、リポジトリ直下から起動します (`slacksitter.toml`、`data/`、`logs/` は、カレント ディレクトリを基準にします)。
 起動後、数分たつと `times*` チャンネルのメッセージが DB に貯まります。
 
 ### 4. デスクトップアプリの起動
 
 ```powershell
-npm run tauri dev
+npm run dev:desktop
 ```
 
 初回は「サーバー接続」画面が出ます。
@@ -123,19 +142,23 @@ npm run tauri dev
 cargo test
 ```
 
-リポジトリ直下で実行すると、ワークスペース全体 (`crates/core`、`crates/server`、`src-tauri`) のテストが走ります。
+リポジトリ直下で実行すると、ワークスペース全体 (`server/core`、`server/api`、`apps/desktop/src-tauri`) のテストが走ります。
 
 フロントエンドの型チェックは次のコマンドです。
 
 ```powershell
-npx tsc --noEmit
+npm run typecheck
 ```
 
 ### 6. 配布用ビルド
 
 ```powershell
-npm run tauri build
+npm run build:web
+npm run tauri -- build
 ```
+
+`npm run build:web` は `apps/web/dist` を作ります。
+`npm run tauri -- build` は、その `dist` を取り込んだデスクトップ アプリを作ります (Tauri が `beforeBuildCommand` で Web 側のビルドも走らせます)。
 
 ## Slack 側で必要な権限
 

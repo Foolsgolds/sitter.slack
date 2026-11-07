@@ -1,7 +1,7 @@
 # SlackSitter サーバー (slacksitter-server)
 
 Slack のデータを SQLite に蓄積し、Web API として提供する常駐プロセスです。
-`crates/server` にあり、Tauri のアプリとは別プロセスで動きます。
+`server/api` にあり、Tauri のアプリとは別プロセスで動きます。
 起動すると、Slack を定期的に巡回して差分を DB に取り込みます。
 
 ```
@@ -19,7 +19,7 @@ Windows のサービス化や自動起動は範囲外です。
 
 ```powershell
 # 1. 設定ファイルを作る (slacksitter.toml は .gitignore 済み)
-Copy-Item slacksitter.example.toml slacksitter.toml
+Copy-Item server\slacksitter.example.toml slacksitter.toml
 # slacksitter.toml の api_key と slack.token を書き換える
 
 # 2. 起動する
@@ -69,7 +69,7 @@ Ctrl+C で終了します。
 
 ## 設定
 
-[slacksitter.example.toml](slacksitter.example.toml) が設定例です。
+[slacksitter.example.toml](../server/slacksitter.example.toml) が設定例です。
 
 | 項目 | 既定値 | 内容 |
 |------|--------|------|
@@ -119,7 +119,7 @@ Ctrl+C で終了します。
 ## API 一覧
 
 JSON のキーは camelCase です。
-モデルは Tauri のコマンドが返していたものと同じ形で、`crates/core/src/slack/models.rs` と [MODELS.md](MODELS.md) に定義があります。
+モデルは Tauri のコマンドが返していたものと同じ形で、`server/core/src/slack/models.rs` と [MODELS.md](MODELS.md) に定義があります。
 エラーは `{ "error": "メッセージ" }` と HTTP ステータスで返します。
 
 | メソッド | パス | 内容 |

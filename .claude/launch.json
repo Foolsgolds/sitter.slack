@@ -10,7 +10,7 @@
     {
       "name": "tauri-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "tauri", "dev"],
+      "runtimeArgs": ["run", "dev:desktop"],
       "port": 1420
     }
   ]
