@@ -1,23 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getServerLogs } from "../api/client";
 import { getLogs } from "../api/commands";
 
 type CopyState = "idle" | "copied" | "failed";
+type LogSource = "app" | "server";
 
-/** Recent lines of the app log, with reload and copy-to-clipboard. */
+/**
+ * Recent lines of a log, with reload and copy-to-clipboard. "アプリ" is this
+ * app's own log (written by the Tauri shell); "サーバー" is the server's (`/api/logs`).
+ */
 export function LogPopup() {
+  const [source, setSource] = useState<LogSource>("app");
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<CopyState>("idle");
   const viewRef = useRef<HTMLPreElement>(null);
 
   const load = useCallback(() => {
-    getLogs()
+    setText(null);
+    const read = source === "app" ? getLogs() : getServerLogs();
+    read
       .then((logs) => {
         setText(logs);
         setError(null);
       })
       .catch((err) => setError(String(err)));
-  }, []);
+  }, [source]);
 
   useEffect(load, [load]);
 
@@ -40,6 +48,22 @@ export function LogPopup() {
   return (
     <div className="popup-form">
       <label>ログ</label>
+      <div className="log-tabs">
+        <button
+          type="button"
+          className={source === "app" ? "log-tab log-tab--selected" : "log-tab"}
+          onClick={() => setSource("app")}
+        >
+          アプリ
+        </button>
+        <button
+          type="button"
+          className={source === "server" ? "log-tab log-tab--selected" : "log-tab"}
+          onClick={() => setSource("server")}
+        >
+          サーバー
+        </button>
+      </div>
       {error ? (
         <p className="popup-status popup-status--error">ログを読み込めませんでした: {error}</p>
       ) : (

@@ -26,6 +26,10 @@ export function ChannelCardView({ channel }: { channel: ChannelWithMessages }) {
         </a>
       </div>
       <div className="channel-card__messages">
+        {channel.messages.length === 0 && (
+          // A channel the server has not synced yet looks like an empty one.
+          <p className="popup-hint">メッセージがありません (サーバーの同期待ちの可能性があります)</p>
+        )}
         {channel.messages.map((message, index) => (
           <MessageItemView key={message.ts ?? index} channelId={channel.channelId} message={message} />
         ))}

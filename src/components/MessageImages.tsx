@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { MessageImageItem } from "../types/models";
-import { fetchImage } from "../api/commands";
+import { fetchImage, releaseObjectUrl } from "../api/client";
 import { useUiStore } from "../store/uiStore";
 
 export function MessageImages({ images }: { images: MessageImageItem[] }) {
@@ -15,19 +15,25 @@ export function MessageImages({ images }: { images: MessageImageItem[] }) {
 }
 
 /** Slack's private image URLs need a Bearer header a webview can't attach to
- * a plain <img src>, so images are loaded on demand via the `fetch_image`
- * command (which returns a data URL) rather than eagerly. */
+ * a plain <img src>, so images are loaded on demand from the server's image
+ * proxy (as an object URL) rather than eagerly. */
 function LazyImage({ candidateUrls }: { candidateUrls: string[] }) {
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const setImagePreview = useUiStore((s) => s.setImagePreview);
+
+  // The object URL is released when this image goes away (the full-size preview keeps its own claim).
+  useEffect(() => {
+    if (!imageUrl) return;
+    return () => releaseObjectUrl(imageUrl);
+  }, [imageUrl]);
 
   async function load() {
     setLoading(true);
     try {
       const url = await fetchImage(candidateUrls);
-      setDataUrl(url);
+      setImageUrl(url);
     } catch (err) {
       console.error("image download failed", err);
       setFailed(true);
@@ -38,7 +44,7 @@ function LazyImage({ candidateUrls }: { candidateUrls: string[] }) {
 
   if (failed) return null;
 
-  if (!dataUrl) {
+  if (!imageUrl) {
     return (
       <button className="show-image-button" onClick={load} disabled={loading}>
         {loading ? "読み込み中..." : "画像を表示"}
@@ -49,9 +55,9 @@ function LazyImage({ candidateUrls }: { candidateUrls: string[] }) {
   return (
     <img
       className="message-image"
-      src={dataUrl}
+      src={imageUrl}
       alt=""
-      onClick={() => setImagePreview(dataUrl)}
+      onClick={() => setImagePreview(imageUrl)}
     />
   );
 }

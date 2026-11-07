@@ -95,9 +95,12 @@ Slack の応答を受ける型は `slack/dto.rs` にあります (`SlackConversa
 ## 依存関係
 
 ```
-commands/channels.rs
-   ├─ slack/endpoints.rs ──► slack/dto.rs
-   └─ slack/models.rs ──► slack/parser.rs
-                       ├─ slack/extract.rs
-                       └─ slack/emoji.rs
+crates/server/src/routes.rs ──► db/view.rs (DB から組み立てる)
+                                  └─ slack/models.rs ──► slack/parser.rs
+                                                      ├─ slack/extract.rs
+                                                      └─ slack/emoji.rs
+
+crates/core/src/sync/ ──► slack/endpoints.rs ──► slack/dto.rs   (Slack から取得して DB に保存する)
 ```
+
+サーバーは、Slack の応答を `messages.raw_json` として保存し、`db/view.rs` が読み出し時に `slack/dto.rs` の型へ読み直して、表示用モデルに変換します。

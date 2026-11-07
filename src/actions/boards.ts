@@ -1,7 +1,8 @@
 // Custom-board operations. Like session.ts these use getState() so they can be
 // called from event handlers; persistence is handled by usePersistBoardState.
 
-import { loadChannels, loadCustomBoards, writeLog } from "../api/commands";
+import { loadChannels, putSyncTargets } from "../api/client";
+import { loadCustomBoards, writeLog } from "../api/commands";
 import { DEFAULT_BOARD_NAME, MAX_CUSTOM_BOARDS } from "../constants";
 import { useBoardStore } from "../store/boardStore";
 import { useChannelsStore } from "../store/channelsStore";
@@ -17,9 +18,25 @@ function uniqueIds(ids: string[]): string[] {
   return Array.from(new Set(ids));
 }
 
-/** Every channel any custom board refers to (sent along with a full refresh). */
+/** Every channel any custom board refers to. */
 export function customBoardChannelIds(): string[] {
   return uniqueIds(useBoardStore.getState().customBoards.flatMap((board) => board.channelIds));
+}
+
+/**
+ * Tells the server which channels the boards need synced. The server keeps them
+ * as its `custom` targets and starts syncing the ones it has never seen.
+ */
+export function syncCustomTargets() {
+  putSyncTargets(customBoardChannelIds())
+    .then(({ unknown }) => {
+      if (unknown.length > 0) {
+        void writeLog("warn", `the server ignored unknown channel ids on the boards: ${unknown.join(", ")}`);
+      }
+    })
+    .catch((err) => {
+      void writeLog("warn", `could not update the server's sync targets: ${String(err)}`);
+    });
 }
 
 /** Reads custom-board.json once at startup and restores the saved filter. */
@@ -36,7 +53,7 @@ export async function hydrateBoards() {
   }
 }
 
-/** Fetches channels the store doesn't have yet (e.g. a freshly picked non-"times" one). */
+/** Fetches channels the store doesn't have yet (e.g. a freshly picked non-prefix one). */
 export async function loadMissingChannels(channelIds: string[]) {
   const loaded = useChannelsStore.getState().channels;
   const missing = channelIds.filter((id) => !loaded.has(id));
@@ -65,6 +82,7 @@ export function addBoard(name: string, channelIds: string[]): boolean {
   useUiStore.getState().setActiveFilter("CustomOnly");
   useUiStore.getState().setOpenPopup(null);
   void writeLog("info", `custom board added: ${board.name} (${board.channelIds.length} channels)`);
+  syncCustomTargets();
   void loadMissingChannels(board.channelIds);
   return true;
 }
@@ -80,6 +98,7 @@ export function updateBoard(index: number, name: string, channelIds: string[]) {
   );
   useUiStore.getState().setOpenPopup(null);
   void writeLog("info", `custom board updated: ${board.name} (${board.channelIds.length} channels)`);
+  syncCustomTargets();
   void loadMissingChannels(board.channelIds);
 }
 
@@ -94,6 +113,7 @@ export function deleteBoard(index: number) {
 
   setBoards(remaining, nextActive);
   void writeLog("info", `custom board deleted: ${customBoards[index].name}`);
+  syncCustomTargets();
   const ui = useUiStore.getState();
   if (ui.activeFilter === "CustomOnly") ui.setActiveFilter("JoinedOnly");
   ui.setOpenPopup(null);

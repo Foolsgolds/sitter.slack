@@ -1,6 +1,6 @@
 import type { MessageReactionItem } from "../types/models";
 import { useEmojiStore } from "../store/emojiStore";
-import { refreshChannel, toggleReaction } from "../api/commands";
+import { refreshChannel, toggleReaction } from "../api/client";
 import { useChannelsStore } from "../store/channelsStore";
 
 interface Props {
