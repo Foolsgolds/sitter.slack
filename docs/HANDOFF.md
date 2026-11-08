@@ -57,6 +57,7 @@ npm run dev:desktop
 ## 既知の注意点
 
 - Rust の表示用モデル (`server/core/src/slack/models.rs`) と `apps/web/src/types/models.ts` は手で同期している。片方を変えたらもう片方も変える
+- `server/core/migrations/*.sql` は改行コードを変えてはいけない。`sqlx::migrate!` はファイルのバイト列のチェックサムを適用済みのものと比べるため、CRLF に変わるだけで「migration 1 was previously applied but has been modified」となり既存の DB を開けない。`.gitattributes` で `*.sql` を LF 固定にしている (モノレポ化の直後に、checkout で CRLF になって実際に起きた)。適用済みのマイグレーションは編集せず、新しい番号のファイルを足す
 - スレッドの返信 (`conversations.replies`) が 1 つでも取れないと、そのチャンネルの同期全体が失敗する (同じ回に取れた新着も書かない。一貫性を優先している)。取れない状態が続くと、そのチャンネルは更新されなくなる。原因は `sync_state.last_error` に残る
 - `thread_broadcast` の返信 (スレッドからチャンネルにも投稿したもの) は、チャンネルの一覧にも親メッセージの下にも出る
 - サーバーが同期するのは、各チャンネルの最新 `history_limit` 件と、そこに追加された新着だけ。それより古いメッセージのリアクション、編集、削除は DB に反映されない。削除されたメッセージは DB に残る
